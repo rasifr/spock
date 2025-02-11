@@ -1,9 +1,19 @@
 <<<<<<< HEAD
+<<<<<<< HEAD
 ## NAME spock node-add-interface
 
 ## SYNOPSIS
 
 `spock node-add-interface NODE_NAME INTERFACE_NAME DSN DB` 
+=======
+## NAME
+
+`spock.node-add-interface()`
+
+## SYNOPSIS
+
+`spock node-add-interface (NODE_NAME INTERFACE_NAME DSN DB)` 
+>>>>>>> f7af430 (Updating syntax in .md files)
 =======
 ## NAME
 
