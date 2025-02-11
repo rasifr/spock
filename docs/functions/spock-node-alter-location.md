@@ -1,10 +1,10 @@
 ## NAME
 
-`spock node-alter-location`
+`spock.node-alter-location()`
 
 ## SYNOPSIS
 
-`spock node-alter-location NODE_NAME LOCATION DB`
+`spock.node-alter-location (NODE_NAME LOCATION DB)`
  
 ## DESCRIPTION
 
