@@ -1,7 +1,14 @@
+## NAME
+
+`spock.replicate-ddl ()`
+
 ## SYNOPSIS
-    ./pgedge spock replicate-ddl REPLICATION_SETS SQL_COMMAND DB
+
+`spock.replicate-ddl (REPLICATION_SETS SQL_COMMAND DB)`
  
 ## DESCRIPTION
+
+Execute the `command` locally before then sending the specified command to the replication queue for execution on subscribers which are subscribed to one of the specified `repsets`.
  
 ## POSITIONAL ARGUMENTS
     REPLICATION_SETS

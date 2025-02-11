@@ -1,10 +1,18 @@
+## NAME
+
+`spock.sequence-convert()`
+
 ## SYNOPSIS
-    ./pgedge spock sequence-convert SEQUENCE DB <flags>
+    
+`spock.sequence-convert (SEQUENCE DB <flags>)`
  
 ## DESCRIPTION
-    Convert sequence(s) to snowflake sequences. 
+    
+Convert sequence(s) to snowflake sequences. 
 
-Example: spock sequence-convert 'public.*' demo 
+## EXAMPLE 
+
+`spock.sequence-convert ('public.*' demo)`
  
 ## POSITIONAL ARGUMENTS
     SEQUENCE

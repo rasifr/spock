@@ -1,10 +1,18 @@
+## NAME 
+
+`spock.sub-remove-repset()`
+
 ## SYNOPSIS
-    ./pgedge spock sub-remove-repset SUBSCRIPTION_NAME REPLICATION_SET DB
+
+`spock.sub-remove-repset (SUBSCRIPTION_NAME REPLICATION_SET DB)`
  
 ## DESCRIPTION
-    Remove a replication set from a subscription. 
+    
+Remove a replication set from a subscription. 
 
-Example: spock sub-remove-repset sub_n2n1 demo_repset demo
+## EXAMPLE 
+
+`spock.sub-remove-repset (sub_n2n1 demo_repset demo)`
  
 ## POSITIONAL ARGUMENTS
     SUBSCRIPTION_NAME

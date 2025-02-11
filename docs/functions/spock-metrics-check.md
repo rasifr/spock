@@ -1,8 +1,14 @@
+## NAME
+
+`spock.metrics-check()`
+
 ## SYNOPSIS
-    ./pgedge spock metrics-check DB
+
+`spock.metrics-check (DB)`
  
 ## DESCRIPTION
-    Retrieve advanced DB & OS metrics.
+    Retrieve advanced database and operating system metrics.
  
 ## POSITIONAL ARGUMENTS
     DB
+        The database for which you are returning metrics.

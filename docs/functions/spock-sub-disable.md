@@ -1,10 +1,17 @@
+## NAME 
+
+`spock.sub-disable ()`
+
 ## SYNOPSIS
-    ./pgedge spock sub-disable SUBSCRIPTION_NAME DB <flags>
+
+`spock.sub-disable (SUBSCRIPTION_NAME DB <flags>)`
  
 ## DESCRIPTION
     Disable a subscription by putting it on hold and disconnect from provider. 
 
-Example: spock sub-disable sub_n2n1 demo
+## EXAMPLE
+
+`spock sub-disable sub_n2n1 demo`
  
 ## POSITIONAL ARGUMENTS
     SUBSCRIPTION_NAME
@@ -14,5 +21,5 @@ Example: spock sub-disable sub_n2n1 demo
  
 ## FLAGS
     -i, --immediate=IMMEDIATE
-        If False, sub will stop after the current transaction.
+        Tells Spock when to stop the subscription. If set to `true`, the subscription is stopped immediately; if set to `false` (the default), it will be only stopped at the end of current transaction.
     

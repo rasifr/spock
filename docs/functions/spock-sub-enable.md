@@ -1,10 +1,18 @@
-## SYNOPSIS
-    ./pgedge spock sub-enable SUBSCRIPTION_NAME DB <flags>
- 
-## DESCRIPTION
-    Enable a subscription. 
+## NAME
 
-Example: spock sub-enable sub_n2n1 demo
+`spock.sub-enable()`
+
+## SYNOPSIS
+
+`spock.sub-enable (SUBSCRIPTION_NAME DB <flags>)`
+
+## DESCRIPTION
+
+Enable a subscription. 
+
+## Example
+
+`spock sub-enable (sub_n2n1 demo)`
  
 ## POSITIONAL ARGUMENTS
     SUBSCRIPTION_NAME
@@ -14,5 +22,5 @@ Example: spock sub-enable sub_n2n1 demo
  
 ## FLAGS
     -i, --immediate=IMMEDIATE
-        If False, sub will start after the current transaction.
+        tells Spock when to stop the subscription. If set to `true`, the subscription is stopped immediately; if set to `false` (the default), it will be only stopped at the end of current transaction.
     

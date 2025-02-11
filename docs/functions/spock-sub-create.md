@@ -1,14 +1,29 @@
+## NAME
+
+`spock.sub-create()`
+
 ## SYNOPSIS
-    ./pgedge spock sub-create SUBSCRIPTION_NAME PROVIDER_DSN DB <flags>
+
+`spock.sub-create (SUBSCRIPTION_NAME PROVIDER_DSN DB <flags>)`
  
 ## DESCRIPTION
-    Create a subscription. 
 
-Example: spock sub-create sub_n2n1 'host=10.1.2.5 port=5432 user=pgedge dbname=demo' demo
+Creates a subscription from current node to the provider node. The command does not wait for completion before returning to the caller.
+
+## EXAMPLE 
+
+`spock.sub-create (sub_n2n1 'host=10.1.2.5 port=5432 user=pgedge dbname=demo' demo)`
  
 ## POSITIONAL ARGUMENTS
     SUBSCRIPTION_NAME
-        The name of the subscription. Each subscription in a cluster must have a unique name. Example: sub_n2n1
+        The name of the subscription. Each subscription in a cluster must have a unique name. The `subscription_name` is used as `application_name` by the replication connection. This means that the name is visible in the `pg_stat_replication` monitoring view. 
+        
+        It can also be used in `synchronous_standby_names` when Spock is used as part of a [synchronous replication](https://github.com/pgEdge/spock#synchronous-replication) setup.
+
+        Use `spock.sub_wait_for_sync(subscription_name)` to wait for the subscription to asynchronously start replicating and complete any needed schema and/or data sync.
+
+        Example: sub_n2n1
+
     PROVIDER_DSN
         The connection string to the node that this node will subscribe to. The user in this string should equal the OS user. This connection string should be reachable from this node and match the one used previously in the node-create command. Example: host=10.1.2.5 port= 5432 user=pgedge dbname=demo
     DB

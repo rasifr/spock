@@ -1,10 +1,18 @@
+## NAME
+
+`spock.sub-add-repset()`
+
 ## SYNOPSIS
-    ./pgedge spock sub-add-repset SUBSCRIPTION_NAME REPLICATION_SET DB
+
+`spock.sub-add-repset (SUBSCRIPTION_NAME REPLICATION_SET DB)`
  
 ## DESCRIPTION
-    Add a replication set to a subscription. 
 
-Example: spock sub-add-repset sub_n2n1 demo_repset demo
+Adds one replication set into a subscriber. Does not synchronize, only activates consumption of events.
+
+## EXAMPLE
+
+`spock.sub-add-repset (sub_n2n1 demo_repset demo)`
  
 ## POSITIONAL ARGUMENTS
     SUBSCRIPTION_NAME

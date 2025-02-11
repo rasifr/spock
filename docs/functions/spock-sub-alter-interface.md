@@ -1,10 +1,18 @@
+## NAME
+
+`spock.sub-alter-interface()`
+
 ## SYNOPSIS
-    ./pgedge spock sub-alter-interface SUBSCRIPTION_NAME INTERFACE_NAME DB
+    
+`spock.sub-alter-interface (SUBSCRIPTION_NAME INTERFACE_NAME DB)`
  
 ## DESCRIPTION
-    Alter the subscription to use a different interface when connecting to the provider node. 
 
-Example: spock sub-alter-interface sub_n2n1 n1_2 demo
+Alter the subscription to use a different interface when connecting to the provider node.
+
+## EXAMPLE
+
+`spock sub-alter-interface (sub_n2n1 n1_2 demo)`
  
 ## POSITIONAL ARGUMENTS
     SUBSCRIPTION_NAME

@@ -1,10 +1,18 @@
+## NAME
+
+`spock.repset-list-tables ()`
+
 ## SYNOPSIS
-    ./pgedge spock repset-list-tables SCHEMA DB
+
+`spock.repset-list-tables (SCHEMA DB)`
  
 ## DESCRIPTION
-    List all tables in all replication sets. 
 
-Example: spock repset-list-tables '*' demo 
+List all tables in all replication sets. 
+
+## EXAMPLE
+
+`spock.repset-list-tables ('*' demo)`
  
 ## POSITIONAL ARGUMENTS
     SCHEMA

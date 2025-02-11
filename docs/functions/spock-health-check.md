@@ -1,5 +1,10 @@
+## NAME
+
+`spock.health-check()`
+
 ## SYNOPSIS
-    ./pgedge spock health-check -
+
+`spock.health-check()`
  
 ## DESCRIPTION
-    Check if PG instance is accepting connections.
+    Check to see if the PostgreSQL instance is accepting connections.

@@ -1,10 +1,18 @@
+## NAME
+
+`spock.repset-add-partition ()`
+
 ## SYNOPSIS
-    ./pgedge spock repset-add-partition PARENT_TABLE DB <flags>
+
+`spock.repset-add-partition (PARENT_TABLE DB <flags>)`
  
 ## DESCRIPTION
-    Add a partition to the same replication set that the parent table is a part of. 
+    
+Add a partition to the same replication set that the parent table is a part of. 
 
-Example: spock repset-add-partition mytable demo --partition=mytable_202012
+## EXAMPLE
+
+`spock.repset-add-partition (mytable demo --partition=mytable_202012)`
  
 ## POSITIONAL ARGUMENTS
     PARENT_TABLE

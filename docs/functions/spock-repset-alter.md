@@ -1,10 +1,18 @@
+## NAME
+
+`spock.repset-alter()`
+
 ## SYNOPSIS
-    ./pgedge spock repset-alter SET_NAME DB <flags>
+
+`spock.repset-alter (SET_NAME DB <flags>)`
  
 ## DESCRIPTION
-    Alter a replication set. 
 
-Example: spock repset-alter demo_repset demo --replicate_truncate=False
+Alter a replication set. 
+
+ ## EXAMPLE
+
+`spock.repset-alter (demo_repset demo --replicate_truncate=False)`
  
 ## POSITIONAL ARGUMENTS
     SET_NAME
@@ -14,14 +22,14 @@ Example: spock repset-alter demo_repset demo --replicate_truncate=False
  
 ## FLAGS
     --replicate_insert=REPLICATE_INSERT
-        For tables in this replication set, replicate inserts.
+        For tables in the specified replication set, replicate inserts.  The default is true.
     
     --replicate_update=REPLICATE_UPDATE
-        For tables in this replication set, replicate updates.
+        For tables in the specified replication set, replicate updates.  The default is true.
     
     --replicate_delete=REPLICATE_DELETE
-        For tables in this replication set, replicate deletes.
+        For tables in the specified replication set, replicate deletes.  The default is true.
     
     --replicate_truncate=REPLICATE_TRUNCATE
-        For tables in this replication set, replicate truncate.
+        For tables in the specified replication set, replicate truncate.  The default is true.
     

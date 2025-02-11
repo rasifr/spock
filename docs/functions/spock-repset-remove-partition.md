@@ -1,10 +1,18 @@
+## NAME
+
+`spock repset-remove-partition ()`
+
 ## SYNOPSIS
-    ./pgedge spock repset-remove-partition PARENT_TABLE DB <flags>
+
+`spock repset-remove-partition (PARENT_TABLE DB <flags>)`
  
 ## DESCRIPTION
-    Remove a partition from the replication set that the parent table is a part of. 
+    
+Remove a partition from the replication set that the parent table is a part of. 
 
-Example: spock repset-remove-partition mytable demo --partition=mytable_202012
+## EXAMPLE
+
+`spock.repset-remove-partition (mytable demo --partition=mytable_202012)`
  
 ## POSITIONAL ARGUMENTS
     PARENT_TABLE

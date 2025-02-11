@@ -1,10 +1,18 @@
+## NAME
+
+`spock.sub-drop ()`
+
 ## SYNOPSIS
-    ./pgedge spock sub-drop SUBSCRIPTION_NAME DB
+
+`spock.sub-drop (SUBSCRIPTION_NAME DB)`
  
 ## DESCRIPTION
-    Drop a subscription. 
 
-Example: spock sub-drop sub_n2n1 demo
+Drop a subscription. 
+
+## EXAMPLE
+
+`spock.sub-drop (sub_n2n1 demo)`
  
 ## POSITIONAL ARGUMENTS
     SUBSCRIPTION_NAME
