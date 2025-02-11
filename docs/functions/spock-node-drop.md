@@ -1,11 +1,17 @@
+## NAME
+
+`spock.node-drop()`
+
 ## SYNOPSIS
-`./pgedge spock node-drop NODE_NAME DB`
+
+`spock.node-drop (NODE_NAME DB)`
  
 ## DESCRIPTION
     Drop a spock node. 
 
-## Example 
-`spock node-drop n1 demo`
+## EXAMPLE 
+
+`spock.node-drop (n1 demo)`
  
 ## POSITIONAL ARGUMENTS
     NODE_NAME

@@ -1,13 +1,18 @@
+## NAME
+
+`spock.repset-create()`
+
 ## SYNOPSIS
-`spock repset-create SET_NAME DB <flags>`
+
+`spock.repset-create (SET_NAME DB <flags>)`
  
 ## DESCRIPTION
 
 Create a replication set. 
 
-## Example
+## EXAMPLE
 
-`spock repset-create demo_repset demo`
+`spock.repset-create (demo_repset demo)`
  
 ## POSITIONAL ARGUMENTS
     SET_NAME

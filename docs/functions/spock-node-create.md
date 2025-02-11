@@ -1,14 +1,18 @@
+## NAME
+
+`spock.node-create()`
+
 ## SYNOPSIS
 
-`./pgedge spock node-create NODE_NAME DSN DB`
+`spock.node-create (NODE_NAME DSN DB)`
  
 ## DESCRIPTION
 
 Create a spock node. 
 
-## Example 
+## EXAMPLE 
 
-`spock node-create n1 'host=10.1.2.5 user=pgedge dbname=demo' demo`
+`spock.node-create (n1 'host=10.1.2.5 user=pgedge dbname=demo' demo`)
  
 ## POSITIONAL ARGUMENTS
     NODE_NAME

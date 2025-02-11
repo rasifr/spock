@@ -1,15 +1,23 @@
+## NAME
+
+`spock.sub-show-table()`
+
 ## SYNOPSIS
-    ./pgedge spock sub-show-table SUBSCRIPTION_NAME RELATION DB
+    
+`spock.sub-show-table (SUBSCRIPTION_NAME RELATION DB)`
  
 ## DESCRIPTION
-    Shows synchronization status of a table. 
+    
+Shows synchronization status of a table. 
 
-Example: spock sub-show-table sub_n2n1 mytable demo
+## EXAMPLE
+
+`spock.sub-show-table (sub_n2n1 mytable demo)`
  
 ## POSITIONAL ARGUMENTS
     SUBSCRIPTION_NAME
-        The name of the subscription. Example: sub_n2n1
+        The name of the subscription. Example: `sub_n2n1`
     RELATION
-        Table name. Example: mytable
+        Table name. Example: `mytable`
     DB
-        The name of the database. Example: demo
+        The name of the database. Example: `demo`

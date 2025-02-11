@@ -1,10 +1,18 @@
+## NAME
+
+`spock.repset-add-table()`
+
 ## SYNOPSIS
-    ./pgedge spock repset-add-table REPLICATION_SET TABLE DB <flags>
+
+`spock.repset-add-table (REPLICATION_SET TABLE DB <flags>)`
  
 ## DESCRIPTION
-    Add a table or tables to a replication set. 
 
-Example: spock repset-add-table demo_repset 'public.*' demo
+Add a table or tables to a replication set. 
+
+## EXAMPLE
+
+`spock.repset-add-table (demo_repset 'public.*' demo)`
  
 ## POSITIONAL ARGUMENTS
     REPLICATION_SET
@@ -27,3 +35,6 @@ Example: spock repset-add-table demo_repset 'public.*' demo
     -i, --include_partitions=INCLUDE_PARTITIONS
         include all partitions in replication.
     
+  **WARNING: Use caution when synchronizing data with a valid row filter.**
+
+Using `sync_data=true` with a valid `row_filter` is usually a one-time operation for a table. Executing it again with a modified `row_filter` won't synchronize data to subscriber. You may need to call `spock.alter_sub_resync_table()` to fix it.

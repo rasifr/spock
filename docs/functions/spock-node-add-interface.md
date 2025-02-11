@@ -1,8 +1,18 @@
+<<<<<<< HEAD
 ## NAME spock node-add-interface
 
 ## SYNOPSIS
 
 `spock node-add-interface NODE_NAME INTERFACE_NAME DSN DB` 
+=======
+## NAME
+
+`spock.node-add-interface()`
+
+## SYNOPSIS
+
+`spock node-add-interface (NODE_NAME INTERFACE_NAME DSN DB)` 
+>>>>>>> f7af430 (Updating syntax in .md files)
 
 ## DESCRIPTION
 
@@ -10,9 +20,9 @@ Add an additional interface to a spock node.
     
 When a node is created, the interface is also created using the dsn specified in the create_node command, and with the same name as the node. This interface allows you to add alternative interfaces with different connection strings to an existing node.
 
-## Example 
+## EXAMPLE 
 
-`spock node-add-interface n1 n1_2 'host=10.1.2.5 user=pgedge dbname=demo' demo`
+`spock.node-add-interface (n1 n1_2 'host=10.1.2.5 user=pgedge dbname=demo' demo`)
 
 ## POSITIONAL ARGUMENTS
     NODE_NAME

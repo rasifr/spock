@@ -1,14 +1,18 @@
+## NAME
+
+`spock.node-list()`
+
 ## SYNOPSIS
 
-`./pgedge spock node-list DB`
+`spock.node-list (DB)`
  
 ## DESCRIPTION
     
-List all nodes registered in a database. If replication is configured correctly, this will list all nodes in the cluster. 
+List all nodes registered in a database. If replication is configured correctly, this will list all of the nodes in a cluster. 
 
-## Example 
+## EXAMPLE 
 
-`spock node-list demo`
+`spock.node-list (demo)`
  
 ## POSITIONAL ARGUMENTS
     DB

@@ -1,10 +1,18 @@
+## NAME
+
+`spock.sub-show-status()`
+
 ## SYNOPSIS
-    ./pgedge spock sub-show-status SUBSCRIPTION_NAME DB
+
+`spock.sub-show-status (SUBSCRIPTION_NAME DB)`
  
 ## DESCRIPTION
-    Show the status and basic information of a subscription. 
 
-Example: spock sub-show-status sub_n2n1 demo
+Show the status and basic information of a subscription. 
+
+## EXAMPLE
+
+`spock.sub-show-status (sub_n2n1 demo)`
  
 ## POSITIONAL ARGUMENTS
     SUBSCRIPTION_NAME

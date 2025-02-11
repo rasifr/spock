@@ -1,12 +1,16 @@
+## NAME 
+
+`spock.repset-drop()`
+
 ## SYNOPSIS
-`spock repset-drop SET_NAME DB`
+`spock.repset-drop (SET_NAME DB)`
  
 ## DESCRIPTION
     Drop a replication set. 
 
-## Example 
+## EXAMPLE 
 
-`spock repset-drop demo_repset demo`
+`spock.repset-drop (demo_repset demo)`
  
 ## POSITIONAL ARGUMENTS
     SET_NAME

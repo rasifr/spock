@@ -1,10 +1,18 @@
+## NAME
+
+`spock.table-wait-for-sync()`
+
 ## SYNOPSIS
-    ./pgedge spock table-wait-for-sync SUBSCRIPTION_NAME RELATION DB
+
+`spock.table-wait-for-sync (SUBSCRIPTION_NAME RELATION DB)`
  
 ## DESCRIPTION
-    Pause until a table finishes synchronizing. 
+    
+Pause until a table finishes synchronizing. 
 
-Example: spock table-wait-for-sync sub_n2n1 mytable demo
+## EXAMPLE
+
+`spock.table-wait-for-sync (sub_n2n1 mytable demo)`
  
 ## POSITIONAL ARGUMENTS
     SUBSCRIPTION_NAME
