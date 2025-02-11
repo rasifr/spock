@@ -4,10 +4,10 @@
 - [Introduction](spock_readme.md#spock-multi-master-replication-for-postgresql)
 - [Building the Spock extension](spock_readme.md#building-the-spock-extension)
 - [Basic Configuration and Usage](spock_readme.md#basic-configuration-and-usage)
-- [Configuration](docs/configuration.md)
-- [API Reference](docs/api.md)
-- [Contributing](docs/contributing.md)
-- [License](docs/license.md)
+- [Advanced Configuration Options](docs/guc_settings.md)
+- [Spock Functions](docs/spock_functions.md)
+- [Limitations](docs/limitations.md)
+- [Release Notes](docs/spock_release_notes.md)
 
 # Spock Multi-Master Replication for PostgreSQL
 
@@ -18,6 +18,8 @@ You must install the `spock` extension must be installed on each provider and su
 All tables on the provider and subscriber must have the same names and reside in the same schema. Tables must also have the same columns, with the samedata types in each column. `CHECK` constraints, `NOT NULL` constraints must be the same or more permissive on the subscriber than the provider.
 
 Your tables must also have the same `PRIMARY KEY`s. We do not recommend using additional `UNIQUE` constraints other than the `PRIMARY KEY`.
+
+For more information about the Spock extension's advanced functionality, visit [here](docs/features.md).
 
 ## Building the Spock Extension
 
