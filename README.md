@@ -1,9 +1,9 @@
 # Project Name
 
 ## Table of Contents
-- [Introduction](spock_readme.md#spock-multi-master-replication-for-postgresql)
-- [Building the Spock extension](spock_readme.md#building-the-spock-extension)
-- [Basic Configuration and Usage](spock_readme.md#basic-configuration-and-usage)
+- [Introduction](README.md#spock-multi-master-replication-for-postgresql)
+- [Building the Spock extension](README.md#building-the-spock-extension)
+- [Basic Configuration and Usage](README.md#basic-configuration-and-usage)
 - [Advanced Configuration Options](docs/guc_settings.md)
 - [Spock Functions](docs/spock_functions.md)
 - [Limitations](docs/limitations.md)
