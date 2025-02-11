@@ -75,6 +75,4 @@ Finally, create the subscription which will start synchronization and replicatio
 
     SELECT spock.sub_wait_for_sync('subscription1');
 
-For detailed information about using the spock extension, visit the [pgEdge website](https://docs.pgedge.com/spock_ext).
-
 Spock is licensed under the [pgEdge Community License v1.0](PGEDGE-COMMUNITY-LICENSE.md)
