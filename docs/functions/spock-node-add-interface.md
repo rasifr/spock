@@ -1,6 +1,8 @@
+## NAME spock node-add-interface
+
 ## SYNOPSIS
 
-`./pgedge spock node-add-interface NODE_NAME INTERFACE_NAME DSN DB` 
+`spock node-add-interface NODE_NAME INTERFACE_NAME DSN DB` 
 
 ## DESCRIPTION
 
