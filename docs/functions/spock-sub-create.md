@@ -12,7 +12,7 @@ Creates a subscription from current node to the provider node. The command does 
 
 ## EXAMPLE 
 
-`spock.sub-create (sub_n2n1 'host=10.1.2.5 port=5432 user=pgedge dbname=demo' demo)`
+`spock.sub-create (sub_n2n1 'host=10.1.2.5 port=5432 user=rocky dbname=demo' demo)`
  
 ## POSITIONAL ARGUMENTS
     SUBSCRIPTION_NAME
@@ -25,7 +25,7 @@ Creates a subscription from current node to the provider node. The command does 
         Example: sub_n2n1
 
     PROVIDER_DSN
-        The connection string to the node that this node will subscribe to. The user in this string should equal the OS user. This connection string should be reachable from this node and match the one used previously in the node-create command. Example: host=10.1.2.5 port= 5432 user=pgedge dbname=demo
+        The connection string to the node that this node will subscribe to. The user in this string should equal the OS user. This connection string should be reachable from this node and match the one used previously in the node-create command. Example: host=10.1.2.5 port= 5432 user=rocky dbname=demo
     DB
         The name of the database. Example: demo
  
