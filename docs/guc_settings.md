@@ -1,11 +1,10 @@
 ## Configuring Spock
 
-You can use the following configuration parameters (or GUCs) on the command line with a `SET` statement 
-or in a PostgreSQL configuration file.
+You can use the following configuration parameters (or GUCs) on the command line with a `SET` statement or in a PostgreSQL configuration file.
 
 **`spock.allow_ddl_from_functions`**
 
-`spock.allow_ddl_from_functions` will enable spock to automatically replicate DDL statements that are called within functions to also be automatically replicated. This can be turned off if these functions are expected to run on every node.When this is set to off statements replicated from functions adhere to the same rule previously described for 'include_ddl_repset.' If a table possesses a defined primary key, it will be added into the 'default' replication set; alternatively, they will be added to the 'default_insert_only' replication set.
+`spock.allow_ddl_from_functions` will enable spock to automatically replicate DDL statements that are called within functions to also be automatically replicated. This can be turned off if these functions are expected to run on every node.  When this is set to `off`, statements replicated from functions adhere to the same rule previously described for 'include_ddl_repset.' If a table possesses a defined primary key, it will be added into the 'default' replication set; alternatively, they will be added to the 'default_insert_only' replication set.
 
 **`spock.batch_inserts`**
 
@@ -40,7 +39,7 @@ For conflict resolution, the `track_commit_timestamp` PostgreSQL setting must be
 
 **`spock.enable_ddl_replication`**
 
-`spock.enable_ddl_replication` enables replication of ddl statements through the default replication set. See this page for more information about using [Automatic DDL Replication](../platform/advanced/autoddl.md) with pgEdge Platform.
+`spock.enable_ddl_replication` enables replication of ddl statements through the default replication set. 
 
 **`spock.extra_connection_options`**
 
