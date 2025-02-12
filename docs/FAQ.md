@@ -32,9 +32,9 @@
  
   Yes, a `row_filter` on attributes of JSONB datatype works fine.
 
-### The apply delay
+### Using apply_delay with time changes
 
-* Does `apply_delay` include TimeZone changes, for example Daylight Savings Time?
+* Does `apply_delay` accommodate time zone changes, for example Daylight Savings Time?
 
   There is a similar mechanism in physical replication - `recovery_min_apply_delay`. However, if you set an interval during daylight savings times, you might get that interval + the time change (in other words, you'll get a 1h delay instead of a 2h delay because of the time differential). This may lead to stopping and starting the database service twice per year.
 
