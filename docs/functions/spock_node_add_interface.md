@@ -1,11 +1,11 @@
 
 ## NAME
 
-`spock.node-add-interface()`
+`spock.node_add_interface()`
 
 ## SYNOPSIS
 
-`spock.node-add-interface (NODE_NAME INTERFACE_NAME DSN DB)` 
+`spock.node_add_interface (node_name name, interface_name name, dsn text)` 
 
 ## DESCRIPTION
 
@@ -15,7 +15,7 @@ When a node is created, the interface is also created using the dsn specified in
 
 ## EXAMPLE 
 
-`spock.node-add-interface (n1 n1_2 'host=10.1.2.5 user=rocky dbname=demo' demo`)
+`spock.node_add_interface ('n1', 'n1_2', 'host=10.1.2.5 user=rocky')`
 
 ## POSITIONAL ARGUMENTS
     NODE_NAME
@@ -23,6 +23,4 @@ When a node is created, the interface is also created using the dsn specified in
     INTERFACE_NAME
         The interface name to add to the node. The interface created by default matches the node name, add a new interface with a unique name. Example: n1_2
     DSN
-        The additional connection string to the node. The user in this string should equal the OS user. This connection string should be reachable from outside and match the one used later in the sub-create command. Example: host=10.1.2.5 port= 5432 user=rocky dbname=demo
-    DB
-        The name of the database. Example: demo
+        The additional connection string to the node. The user in this string should equal the OS user. This connection string should be reachable from outside and match the one used later in the sub-create command. Example: host=10.1.2.5 port= 5432 user=rocky
