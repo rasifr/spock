@@ -6,7 +6,6 @@ The following functions are included in the `spock` extension:
 |----------|-------------| 
 | **Node Management Functions** | |
 | [node_add_interface](functions/spock_node_add_interface.md) | Add a new node interface.
-| [node_alter_location](functions/spock_node_alter_location.md) | Set location details for a spock node.
 | [node_create](functions/spock_node_create.md) | Define a node for spock.
 | [node_drop](functions/spock_node_drop.md) | Remove a spock node.
 | [node_drop_interface](functions/spock_node_drop_interface.md) | Delete a node interface.
