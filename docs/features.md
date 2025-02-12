@@ -1,8 +1,17 @@
+
+## Table of Contents
+- [Automatic Replication of DDL](features.md#)
+- [Basic Configuration and Usage](README.md#basic-configuration-and-usage)
+- [Advanced Configuration Options](docs/guc_settings.md)
+- [Spock Functions](docs/spock_functions.md)
+- [Limitations](docs/limitations.md)
+- [FAQ](docs/FAQ.md)
+- [Release Notes](docs/spock_release_notes.md)
+
 # Spock Feature Overview
 
-The 
+The Spock extension is designed to support the following use cases:
 
-Use cases supported are:
 * Asynchronous multi-active replication with conflict resolution
 * Upgrades between major versions
 * Full database replication
@@ -12,18 +21,12 @@ Use cases supported are:
 * Selective replication of table columns at publisher side
 * Data gather/merge from multiple upstream servers
 
-Architectural details:
-* Spock works on a per-database level, not whole server level like physical streaming replication
-* One Provider may feed multiple Subscribers without incurring additional disk write overhead
-* One Subscriber can merge changes from several origins and detect conflict
-  between changes with automatic and configurable conflict resolution (some,
-  but not all aspects required for multi-master).
+Note that:
+* Spock works on a per-database level instead of a whole server level like physical streaming replication.
+* One provider may feed multiple subscribers without incurring additional disk write overhead
+* One subscriber can merge changes from several origins and detect conflict between changes with automatic and configurable conflict resolution (some, but not all aspects required for multi-master).
 * Cascading replication is implemented in the form of changeset forwarding.
 
-
-
-## Snowflake Sequences
-[Snowflake](https://github.com/pgEdge/snowflake-sequences) is a PostgreSQL extension that provides an int8 and sequence based unique ID solution to optionally replace the PostgreSQL built-in bigserial data type. This extension allows Snowflake IDs that are unique within one sequence across multiple PostgreSQL instances in a distributed cluster.
 
 ## Automatic Replication of DDL
 The spock extension can now automatically replicate DDL statements. To enable this feature, set the following parameters to `on`: `spock.enable_ddl_replication`, `spock.include_ddl_repset`, and `spock.allow_ddl_from_functions`. We recommend you set these to `on` only when the database schema matches exactly on all nodes- either when all databases have no objects, or when all databases have exactly the same objects and all tables are added to replication sets.
@@ -132,7 +135,7 @@ is set to `error`. The default value of `spock.conflict_resolution` is `true`.
 In addition to the SQL-level node and subscription creation, Spock also
 supports creating a subscriber node by cloning the provider with `pg_basebackup` and
 starting it up as a Spock subscriber. Use the `spock_create_subscriber` tool
-(located in the `bin` directory of your pgEdge platform installation) to register the node.
+(located in the `bin` directory of your installation) to register the node.
 
 #### Synopsis:
 
@@ -155,6 +158,7 @@ Specify the following options as needed.
 | `-s`, `--stop` | stop the server once the initialization is done
 | `-v` | increase logging verbosity
 | `--extra-basebackup-args` | Additional arguments to pass to `pg_basebackup`. Safe options: `-T`, `-c`, `--xlogdir`/`--waldir`
+
 
 **Overriding the location of Configuration files**
 
@@ -254,3 +258,5 @@ a replication set named `configuration`, and all other new tables which are not 
 by extensions will go into the `default` replication set.
 
 
+## Snowflake Sequences
+[Snowflake](https://github.com/pgEdge/snowflake-sequences) is a PostgreSQL extension that provides an int8 and sequence based unique ID solution to optionally replace the PostgreSQL built-in bigserial data type. This extension allows Snowflake IDs that are unique within one sequence across multiple PostgreSQL instances in a distributed cluster.
