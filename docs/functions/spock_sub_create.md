@@ -2,20 +2,24 @@
 
 `spock.sub_create()`
 
-## SYNOPSIS
+### SYNOPSIS
 
 `spock.sub_create (subscription_name name, provider_dsn text, repsets text[], sync_structure boolean,
   sync_data boolean, forward_origins text[], apply_delay interval)`
  
-## DESCRIPTION
+### DESCRIPTION
 
 Creates a subscription from current node to the provider node. The command does not wait for completion before returning to the caller.
 
-## EXAMPLE 
+The `subscription_name` is used as `application_name` by the replication connection. This means that it's visible in the `pg_stat_replication` monitoring view. It can also be used in `synchronous_standby_names` when Spock is used as part of a synchronous replication scenario.
+
+Use `spock.sub_wait_for_sync(subscription_name)` to wait for the subscription to asynchronously start replicating and complete any needed schema and/or data sync.
+
+### EXAMPLE 
 
 `spock.sub_create ('sub_n2n1', 'host=10.1.2.5 port=5432 user=rocky dbname=demo')`
  
-## ARGUMENTS
+### ARGUMENTS
     `subscription_name` 
         The name of the subscription. Each subscription in a cluster must have a unique name.  The name is used as `application_name` by the replication connection. This means that the name is visible in the `pg_stat_replication` monitoring view. 
     `provider_dsn` 
