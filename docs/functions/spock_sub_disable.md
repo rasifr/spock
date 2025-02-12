@@ -1,25 +1,25 @@
 ## NAME 
 
-`spock.sub-disable ()`
+`spock.sub_disable ()`
 
-## SYNOPSIS
+### SYNOPSIS
 
-`spock.sub-disable (SUBSCRIPTION_NAME DB <flags>)`
+`spock.sub_disable (subscription_name name, immediate boolean)`
  
-## DESCRIPTION
+### DESCRIPTION
     Disable a subscription by putting it on hold and disconnect from provider. 
 
-## EXAMPLE
+### EXAMPLE
 
-`spock sub-disable sub_n2n1 demo`
+`spock sub_disable 'sub_n2n1'`
  
-## POSITIONAL ARGUMENTS
-    SUBSCRIPTION_NAME
-        The name of the subscription. Example: sub_n2n1
-    DB
-        The name of the database. Example: demo
+### ARGUMENTS
+    `subscription_name`
+        The name of the existing subscription.
+    `immediate`
+        If `true`, the subscription is stopped immediately, otherwise it will be only stopped at the end of current transaction; the default is `false`.
  
-## FLAGS
+### FLAGS
     -i, --immediate=IMMEDIATE
         Tells Spock when to stop the subscription. If set to `true`, the subscription is stopped immediately; if set to `false` (the default), it will be only stopped at the end of current transaction.
     
