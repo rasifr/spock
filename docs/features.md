@@ -1,14 +1,12 @@
 
-## Table of Contents
-- [Automatic Replication of DDL](features.md#)
-- [Basic Configuration and Usage](README.md#basic-configuration-and-usage)
-- [Advanced Configuration Options](docs/guc_settings.md)
-- [Spock Functions](docs/spock_functions.md)
-- [Limitations](docs/limitations.md)
-- [FAQ](docs/FAQ.md)
-- [Release Notes](docs/spock_release_notes.md)
+## Features
 
-# Spock Feature Overview
+- [Automatic DDL Replication](features.md#automatic-replication-of-ddl)
+- [Replicating Partitioned Tables](features.md#replicating-partitioned-tables)
+- [Conflict-Free Delta-Apply Columns](features.md#conflict-free-delta-apply-columns-conflict-avoidance)
+- [Using Batch Inserts](features.md#using-batch-inserts)
+- [Filtering](features.md#filtering)
+- [Using Spock with Snowflake Sequences](features.md#using-spock-with-snowflake-sequences)
 
 The Spock extension is designed to support the following use cases:
 
@@ -28,25 +26,38 @@ Note that:
 * Cascading replication is implemented in the form of changeset forwarding.
 
 
-## Automatic Replication of DDL
-The spock extension can now automatically replicate DDL statements. To enable this feature, set the following parameters to `on`: `spock.enable_ddl_replication`, `spock.include_ddl_repset`, and `spock.allow_ddl_from_functions`. We recommend you set these to `on` only when the database schema matches exactly on all nodes- either when all databases have no objects, or when all databases have exactly the same objects and all tables are added to replication sets.
+## Automatic DDL Replication
 
-`spock.enable_ddl_replication` enables replication of ddl statements through the default replication set. Some DDL statements are intentionally not replicated (ie. CREATE DATABASE), and some are replicated but could cause issues in two ways. Some DDL statements could lead to inconsistent data (ie. CREATE TABLE... AS...) since the DDL statement is replicated before the table is added to the replication set. Some DDL statements are replicated, but are potentially an issue in a 3+ node cluster (ie. DROP TABLE).
+The spock extension can automatically replicate DDL statements. To enable automatic DDL replication, set the following parameters to `on`: 
 
-`spock.include_ddl_repset` enables spock to automatically add tables to replication sets at the time they are created on each node. Tables with Primary Keys will be added to the default replication set, and tables without Primary Keys will be added to the default_insert_only replication set. Altering a table to add or remove a Primary Key will make the correct adjustment to which replication set the table is part of. Setting a table to unlogged will remove it from replication. Detaching a partition will not remove it from replication.
+* `spock.enable_ddl_replication` enables replication of ddl statements through the default replication set. Some DDL statements are intentionally not replicated (like `CREATE DATABASE`).  Other DDL statements are replicated, but can cause lead to replication issues (like the `CREATE TABLE... AS...` statement).  In the case of `CREATE TABLE... AS...`, the DDL statement is replicated before the table is added to the replication set, leading to potential data irregularities.  Some DDL statements are replicated, but might potentially create an issue in a 3+ node cluster (ie. `DROP TABLE`).
 
-`spock.allow_ddl_from_functions` enables spock to automatically replicate DDL statements that are called within functions to also be automatically replicated. This can be turned off if these functions are expected to run on every node.When this is set to off statements replicated from functions adhere to the same rule previously described for 'include_ddl_repset.' If a table possesses a defined primary key, it will be added into the 'default' replication set; alternatively, they will be added to the 'default_insert_only' replication set.
+* `spock.include_ddl_repset` enables spock to automatically add tables to replication sets at the time they are created on each node. Tables with Primary Keys will be added to the `default` replication set, and tables without Primary Keys will be added to the `default_insert_only` replication set. Altering a table to add or remove a Primary Key will also modify which replication set the table is a member of. Setting a table to `unlogged` removes the table from replication. Detaching a partition will not remove a table from replication.
+
+* `spock.allow_ddl_from_functions` enables spock to automatically replicate DDL statements that are called within functions. You can turned this `off` if the functions are expected to run on every node. When  set to `off`, statements replicated from functions adhere to the same rule previously described for `include_ddl_repset`. If a table possesses a primary key, it will be added into the `default` replication set; alternatively, they will be added to the `default_insert_only` replication set.
+
+It's best to set these parameters to `on` only when the database schema matches exactly on all nodes - either when all databases have no objects, or when all databases have exactly the same objects and all tables are added to replication sets.
 
 During the auto replication process, spock generates messages that provide information about the execution. Here are the descriptions for each message:
-- "DDL statement replicated."
-This message is a INFO level message. It is displayed whenever a DDL statement is successfully replicated. To include these messages in the server log files, the configuration must have "log_min_messages=INFO" set.
-- "DDL statement replicated, but could be unsafe."
-This message serves as a warning. It is generated when certain DDL statements, though successfully replicated, are deemed potentially unsafe. For example, statements like "CREATE TABLE... AS..." will trigger this warning.
-- "This DDL statement will not be replicated."
-This warning message is generated when auto replication is active, but the specific DDL is either unsupported or intentionally excluded from replication.4- "table 'test' was added to 'default' replication set." This is a LOG message providing information about the replication set used for a given table when 'spock.include_ddl_repset' is set.
+
+- `DDL statement replicated.`
+
+  This message is a INFO level message. It is displayed whenever a DDL statement is successfully replicated. To include these messages in the server log files, the configuration must have `log_min_messages=INFO` set.
+
+- `DDL statement replicated, but could be unsafe.`
+
+  This message serves as a warning. It is generated when certain DDL statements, though successfully replicated, are deemed potentially unsafe. For example, statements like `CREATE TABLE... AS...` will trigger this warning.
+
+- `This DDL statement will not be replicated.`
+
+  This warning message is generated when auto replication is active, but the specific DDL is either unsupported or intentionally excluded from replication.
+
+- `table 'test' was added to default replication set.` 
+
+  This is a LOG message providing information about the replication set used for a given table when `spock.include_ddl_repset` is set.
 
 
-## Replication of Partitioned Tables
+## Replicating Partitioned Tables
 
 You can use Spock to replicate partitioned tables; by default, when adding a partitioned table to a replication set, it will include all of its current partitions. If you add partitions later, you will need to use the `partition_add` function to add them to your replication sets. The DDL for the partitioned table and partitions must be present on the subscriber nodes (like a non-partitioned table).
 
@@ -130,51 +141,6 @@ columns of the table. Also the batch mode will only work when `spock.conflict_re
 is set to `error`. The default value of `spock.conflict_resolution` is `true`.
 
 
-### Creating subscriber nodes with base backups
-
-In addition to the SQL-level node and subscription creation, Spock also
-supports creating a subscriber node by cloning the provider with `pg_basebackup` and
-starting it up as a Spock subscriber. Use the `spock_create_subscriber` tool
-(located in the `bin` directory of your installation) to register the node.
-
-#### Synopsis:
-
-  `spock_create_subscriber [OPTION]...`
-
-**Options**
-
-Specify the following options as needed.
-
-| Option   | Description
-|----------|-------------
-| `-D`, `--pgdata=DIRECTORY` | `data` directory to be used for new node. This can be either empty/non-existing directory, or directory populated using the `pg_basebackup -X stream` command.
-| `--databases`              |  optional list of databases to replicate
-| `-n`, `--subscriber-name=NAME` | name of the newly created subscriber
-| `--subscriber-dsn=CONNSTR` | connection string to the newly created subscriber
-| `--provider-dsn=CONNSTR` | connection string to the provider
-| `--replication-sets=SETS` | comma separated list of replication set names
-| `--apply-delay=DELAY` | apply delay in seconds (by default 0)
-| `--drop-slot-if-exists` | drop replication slot of conflicting name
-| `-s`, `--stop` | stop the server once the initialization is done
-| `-v` | increase logging verbosity
-| `--extra-basebackup-args` | Additional arguments to pass to `pg_basebackup`. Safe options: `-T`, `-c`, `--xlogdir`/`--waldir`
-
-
-**Overriding the location of Configuration files**
-
-You can use the following options to override the location of the configuration files.
-
-| Option   | Description
-|----------|-------------
-|`--hba-conf` | path to the new pg_hba.conf
-| `--postgresql-conf` | path to the new postgresql.conf
-| `--recovery-conf` | path to the template recovery configuration
-
-Unlike `spock.sub_create`'s data sync options, this clone ignores
-replication sets and copies all tables on all databases. However, it's often
-much faster, especially over high-bandwidth links.
-
-
 ## Filtering
 
 ### Row Filtering
@@ -182,7 +148,7 @@ much faster, especially over high-bandwidth links.
 Spock allows row based filtering both on provider side and the subscriber
 side.
 
-#### Row Filtering on Provider
+**Row Filtering on Provider**
 
 On the provider the row filtering can be done by specifying `row_filter`
 parameter for the `spock.repset_add_table` function. The
@@ -201,7 +167,7 @@ It's also worth noting that the `row_filter` is running inside the replication
 session so session specific expressions such as `CURRENT_USER` will have
 values of the replication session and not the session which did the writes.
 
-#### Row Filtering on Subscriber
+**Row Filtering on Subscriber**
 
 On the subscriber the row based filtering can be implemented using standard
 `BEFORE TRIGGER` mechanism.
@@ -211,52 +177,15 @@ It is required to mark any such triggers as either `ENABLE REPLICA` or
 process.
 
 
-## Automatically Assigning Tables to Replication Sets
-
-Auto DDL is a great alternative to using a trigger to manage replication sets, but if you do need to dynamically modify replication rules, column or row filters, or partition filters, this trigger might be useful. This trigger does not replicate the DDL statements across nodes, but automatically adds newly created tables to a replication set on the node on which the trigger fires.
 
 
-Before using the trigger, you should modify this trigger to account for all flavors of `CREATE TABLE` statements you might run. Since the trigger executes in a transaction, if the code in the trigger fails, the transaction is rolled back, including any `CREATE TABLE` statements that caused the trigger to fire. This means that statements like `CREATE UNLOGGED TABLE` will fail if the trigger fails.
+## Using Spock with Snowflake Sequences
 
-Please note that you must ensure that automatic replication of DDL commands is disabled.  You can use the following commands on the PSQL command line to disable Auto DDL functionality:
+We strongly recommend that you use Snowflake Sequences instead of legacy PostgreSQL sequences.
 
-```sql
-ALTER SYSTEM SET spock.enable_ddl_replication=off;
-ALTER SYSTEM SET spock.include_ddl_repset=off;
-ALTER SYSTEM SET spock.allow_ddl_from_functions=off;
-SELECT pg_reload_conf(); 
-```
-
-You can use the event trigger facility can be used to describe rules which define replication sets for newly created tables. For example:
-
-```sql
-    CREATE OR REPLACE FUNCTION spock_assign_repset()
-    RETURNS event_trigger AS $$
-    DECLARE obj record;
-    BEGIN
-        FOR obj IN SELECT * FROM pg_event_trigger_ddl_commands()
-        LOOP
-            IF obj.object_type = 'table' THEN
-                IF obj.schema_name = 'config' THEN
-                    PERFORM spock.repset_add_table('configuration', obj.objid);
-                ELSIF NOT obj.in_extension THEN
-                    PERFORM spock.repset_add_table('default', obj.objid);
-                END IF;
-            END IF;
-        END LOOP;
-    END;
-    $$ LANGUAGE plpgsql;
-
-    CREATE EVENT TRIGGER spock_assign_repset_trg
-        ON ddl_command_end
-        WHEN TAG IN ('CREATE TABLE', 'CREATE TABLE AS')
-        EXECUTE PROCEDURE spock_assign_repset();
-```
-
-The code snippet shown above puts all new tables created in the `config` schema into
-a replication set named `configuration`, and all other new tables which are not created
-by extensions will go into the `default` replication set.
-
-
-## Snowflake Sequences
 [Snowflake](https://github.com/pgEdge/snowflake-sequences) is a PostgreSQL extension that provides an int8 and sequence based unique ID solution to optionally replace the PostgreSQL built-in bigserial data type. This extension allows Snowflake IDs that are unique within one sequence across multiple PostgreSQL instances in a distributed cluster.
+
+The Spock extension includes the following functions to help you manage Snowflake sequences:
+
+* convert_sequence_to_snowflake
+* convert_column_to_int8
