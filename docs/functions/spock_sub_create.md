@@ -1,10 +1,11 @@
 ## NAME
 
-`spock.sub-create()`
+`spock.sub_create()`
 
 ## SYNOPSIS
 
-`spock.sub-create (SUBSCRIPTION_NAME PROVIDER_DSN DB <flags>)`
+`spock.sub_create (subscription_name name, provider_dsn text, repsets text[], sync_structure boolean,
+  sync_data boolean, forward_origins text[], apply_delay interval)`
  
 ## DESCRIPTION
 
@@ -12,36 +13,22 @@ Creates a subscription from current node to the provider node. The command does 
 
 ## EXAMPLE 
 
-`spock.sub-create (sub_n2n1 'host=10.1.2.5 port=5432 user=rocky dbname=demo' demo)`
+`spock.sub_create ('sub_n2n1', 'host=10.1.2.5 port=5432 user=rocky dbname=demo')`
  
-## POSITIONAL ARGUMENTS
-    SUBSCRIPTION_NAME
-        The name of the subscription. Each subscription in a cluster must have a unique name. The `subscription_name` is used as `application_name` by the replication connection. This means that the name is visible in the `pg_stat_replication` monitoring view. 
-        
-        It can also be used in `synchronous_standby_names` when Spock is used as part of a synchronous replication setup.
-
-        Use `spock.sub_wait_for_sync(subscription_name)` to wait for the subscription to asynchronously start replicating and complete any needed schema and/or data sync.
-
-        Example: sub_n2n1
-
-    PROVIDER_DSN
-        The connection string to the node that this node will subscribe to. The user in this string should equal the OS user. This connection string should be reachable from this node and match the one used previously in the node-create command. Example: host=10.1.2.5 port= 5432 user=rocky dbname=demo
-    DB
-        The name of the database. Example: demo
- 
-## FLAGS
-    -r, --replication_sets=REPLICATION_SETS
-        An array of replication sets to automatically include in this subscription. Example: demo_repset,default,default_insert_only,ddl_sql
-    
-    --synchronize_structure=SYNCHRONIZE_STRUCTURE
-        Synchronize structure on subscription create. If some objects already exist in this database then the create of the subscription will fail.
-    
-    --synchronize_data=SYNCHRONIZE_DATA
-        Synchronize data on subscription create.
-    
-    -f, --forward_origins=FORWARD_ORIGINS
-        For multimaster, this should be kept at the default. For replicating everything written to a node, transactions replicated to it included, this can be set to all.
-    
-    -a, --apply_delay=APPLY_DELAY
-        The amount of time to delay the replication.
-    
+## ARGUMENTS
+    `subscription_name` 
+        The name of the subscription. Each subscription in a cluster must have a unique name.  The name is used as `application_name` by the replication connection. This means that the name is visible in the `pg_stat_replication` monitoring view. 
+    `provider_dsn` 
+        The connection string to a provider.
+    `repsets`
+        An array of replication sets to subscribe to; these must already exist, default is `{default,default_insert_only,ddl_sql}`.
+    `sync_structure`
+        Specifies if Spock should synchronize the structure from provider to the subscriber; the default is `false`.
+    `sync_data` 
+        Specifies if Spock should synchronize data from provider to the subscriber, the default is `true`.
+    `forward_origins`
+        An array of origin names to forward; currently the only supported values are an empty array (meaning don't forward any changes that didn't originate on provider node, useful for two-way replication between the nodes), or `{all}` which means replicate all changes no matter what is their origin. The default is `{all}`.
+    `apply_delay`
+        How much to delay replication; the default is `0` seconds.
+    `force_text_transfer`
+        Force the provider to replicate all columns using a text representation (which is slower, but may be used to change the type of a replicated column on the subscriber). The default is `false`.
