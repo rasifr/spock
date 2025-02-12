@@ -1,22 +1,20 @@
 ## NAME
 
-`spock.node-drop()`
+`spock.node_drop()`
 
-## SYNOPSIS
+### SYNOPSIS
 
-`spock.node-drop (NODE_NAME DB)`
+`spock.node_drop (node_name name, ifexists bool)`
  
-## DESCRIPTION
+### DESCRIPTION
     Drop a spock node. 
 
-## EXAMPLE 
+### EXAMPLE 
 
-`spock.node-drop (n1 demo)`
+`spock.node_drop ('n1')`
  
-## POSITIONAL ARGUMENTS
-    NODE_NAME
+### POSITIONAL ARGUMENTS
+    node_name
         The name of the node. Example: n1
-    DB
-        The name of the database. Example: demo
-    IFEXISTS
+    ifexists
         `ifexists` specifies the Spock extension behavior with regards to error messages. If `true`, an error is not thrown when the specified node does not exist. The default is `false`.
