@@ -1,8 +1,7 @@
 # Project Name
 
 ## Table of Contents
-- [Introduction](README.md#spock-multi-master-replication-for-postgresql)
-- [Building the Spock extension](README.md#building-the-spock-extension)
+- [Building the Spock Extension](README.md#building-the-spock-extension)
 - [Basic Configuration and Usage](README.md#basic-configuration-and-usage)
 - [Advanced Configuration Options](docs/guc_settings.md)
 - [Spock Functions](docs/spock_functions.md)
@@ -24,7 +23,7 @@ For more information about the Spock extension's advanced functionality, visit [
 
 ## Building the Spock Extension
 
-The `spock` extension must be used with a copy of PostgreSQL that is [configured for your system with version-specific .diff files from the `patches` directory (also in this repository) applied before building](https://www.postgresql.org/docs/17/install-make.html#INSTALL-PROCEDURE-MAKE).
+You need to use the `spock` extension with a copy of PostgreSQL that is [configured for your system with version-specific .diff files from the `patches` directory (also in this repository) applied before building](https://www.postgresql.org/docs/17/install-make.html#INSTALL-PROCEDURE-MAKE).
 
 After building your copy of PostgreSQL, build the spock extension from source code, using a build process [much like any other PostgreSQL extension](https://www.postgresql.org/docs/17/extend-extensions.html); after downloading the source from this repository, then `make` and `make-install` the code.
 
@@ -32,9 +31,10 @@ Then, use the `CREATE EXTENSION` command to install the `spock` extension on eac
 
 `CREATE EXTENSION spock;`
 
+
 ### Basic Configuration and Usage
 
-Before using the extension, you will need to configure the PostgreSQL server to support logical decoding:
+Before using the extension, configure the PostgreSQL server to support logical decoding:
 
     wal_level = 'logical'
     max_worker_processes = 10   # one per database needed on provider node
@@ -46,7 +46,7 @@ Before using the extension, you will need to configure the PostgreSQL server to 
 
 Also, you will need to configure your `pg_hba.conf` file to allow logical replication connections from localhost. Logical replication connections are treated by `pg_hba.conf` as regular connections to the provider database.
 
-Then, use the node_create command to create the provider node:
+Then, use the `spock.node_create` command to create the provider node:
 
     SELECT spock.node_create(
         node_name := 'provider1',
