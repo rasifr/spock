@@ -15,7 +15,7 @@ When a node is created, the interface is also created using the dsn specified in
 
 ## EXAMPLE 
 
-`spock.node-add-interface (n1 n1_2 'host=10.1.2.5 user=pgedge dbname=demo' demo`)
+`spock.node-add-interface (n1 n1_2 'host=10.1.2.5 user=rocky dbname=demo' demo`)
 
 ## POSITIONAL ARGUMENTS
     NODE_NAME
