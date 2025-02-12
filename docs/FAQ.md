@@ -1,20 +1,20 @@
 # Frequently Asked Questions
 
-### The column filter
+### Using a column filter
 
-* What happens if we column filter on a table with OIDS? Can we filter on xmin?
- - For a table with OIDs, column filter works fine. No, we cannot filter system columns
-like oid, xmin.
+* What happens if I set up a column filter on a table with OIDS? Can I filter on xmin?
+ - For a table with OIDs, column filter works fine. No, we cannot filter on system columns
+like oid or xmin.
 
 * What happens if a column being filtered on is dropped?
- - Currently in spock replication, even primary key can be dropped at provider.
-If a column being filtered on is dropped, at provider it is removed from the column
-filter too. This can be seen using `spock.repset_show_table()`.
- Columns at subscriber remain as is, which is correct and expected. At subscriber,
-in this state INSERTs replicate, but UPDATEs and DELETEs do not.
+ - Currently in spock replication, you can drop even a primary key on the provider.
+If a column being filtered on is dropped on the provider, it is removed from the column
+filter too. Use `spock.repset_show_table()` to confirm this behavior.
+ Columns on each subscriber remain as defined, which is correct and expected. In this state,
+the subscriber replicates INSERTs, but does not replicate UPDATEs and DELETEs.
 
-* What happens if we add a column, does that automatically get included?
- - If a column is added at provider, it does not automatically get added to the column filter.
+* If we add a column, does it automatically get included?
+ - If you add a column to the provider, it is not automatically added to the column filter.
 
 ### The row filter
 
