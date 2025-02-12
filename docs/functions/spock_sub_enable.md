@@ -1,26 +1,21 @@
 ## NAME
 
-`spock.sub-enable()`
+`spock.sub_enable()`
 
-## SYNOPSIS
+### SYNOPSIS
 
-`spock.sub-enable (SUBSCRIPTION_NAME DB <flags>)`
+`spock.sub_enable (subscription_name name, immediate boolean)`
 
-## DESCRIPTION
+### DESCRIPTION
 
 Enable a subscription. 
 
-## Example
+### Example
 
-`spock sub-enable (sub_n2n1 demo)`
+`spock sub_enable (`sub_n2n1`)`
  
-## POSITIONAL ARGUMENTS
-    SUBSCRIPTION_NAME
-        The name of the subscription. Example: sub_n2n1
-    DB
-        The name of the database. Example: demo
- 
-## FLAGS
-    -i, --immediate=IMMEDIATE
-        tells Spock when to stop the subscription. If set to `true`, the subscription is stopped immediately; if set to `false` (the default), it will be only stopped at the end of current transaction.
-    
+### POSITIONAL ARGUMENTS
+    `subscription_name`
+        The name of the existing subscription.
+    `immediate`
+        If `true`, the subscription is started immediately, otherwise it will be only started at the end of current transaction; the default is `false`.
