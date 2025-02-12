@@ -18,7 +18,7 @@ Creates a subscription from current node to the provider node. The command does 
     SUBSCRIPTION_NAME
         The name of the subscription. Each subscription in a cluster must have a unique name. The `subscription_name` is used as `application_name` by the replication connection. This means that the name is visible in the `pg_stat_replication` monitoring view. 
         
-        It can also be used in `synchronous_standby_names` when Spock is used as part of a [synchronous replication](https://github.com/pgEdge/spock#synchronous-replication) setup.
+        It can also be used in `synchronous_standby_names` when Spock is used as part of a synchronous replication setup.
 
         Use `spock.sub_wait_for_sync(subscription_name)` to wait for the subscription to asynchronously start replicating and complete any needed schema and/or data sync.
 
