@@ -7,6 +7,7 @@
 - [Advanced Configuration Options](docs/guc_settings.md)
 - [Spock Functions](docs/spock_functions.md)
 - [Limitations](docs/limitations.md)
+- [FAQ](docs/FAQ.md)
 - [Release Notes](docs/spock_release_notes.md)
 
 # Spock Multi-Master Replication for PostgreSQL
