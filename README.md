@@ -1,4 +1,4 @@
-# Project Name
+# Spock Multi-Master Replication for PostgreSQL
 
 ## Table of Contents
 - [Building the Spock Extension](README.md#building-the-spock-extension)
