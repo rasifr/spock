@@ -1,23 +1,21 @@
 ## NAME
 
-`spock.repset-remove-table ()`
+`spock.repset_remove_table ()`
 
-## SYNOPSIS
+### SYNOPSIS
 
-`spock.repset-remove-table (REPLICATION_SET TABLE DB)`
+`spock.repset_remove_table (set_name name, relation regclass)`
  
-## DESCRIPTION
+### DESCRIPTION
 
 Remove a table from a replication set. 
 
-## EXAMPLE 
+### EXAMPLE 
 
-`spock.repset-remove-table (demo_repset public.mytable demo)`
+`spock.repset_remove_table ('demo_repset', 'public.mytable')`
  
-## POSITIONAL ARGUMENTS
-    REPLICATION_SET
-        The replication set name. Example: demo_repset
-    TABLE
-        The name of the table to remove. Examples:  public.mytable
-    DB
-        The name of the database. Example: demo
+### POSITIONAL ARGUMENTS
+    set_name
+        The name of the existing replication set.
+    relation
+        The name or OID of the table to be removed from the set.
