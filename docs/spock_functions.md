@@ -36,5 +36,4 @@ The following functions are included in the `spock` extension:
 | [table_wait_for_sync](functions/spock_table_wait_for_sync.md) | Pause until a table finishes synchronizing.
 | [sub_resync_table](functions/spock_sub_resync_table.md) | Resynchronize a table.
 | [replicate_ddl](functions/spock_replicate_ddl.md) | Enable DDL replication.
-| [sequence_convert](functions/spock_sequence_convert.md) | Convert sequence(s) to snowflake sequences. 
 | [set_readonly](functions/spock_set_readonly.md) | Turn PostgreSQL read_only mode 'on' or 'off'.
