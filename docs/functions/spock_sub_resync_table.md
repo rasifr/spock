@@ -1,28 +1,21 @@
 ## NAME
 
-`spock.sub-resync-table()`
+`spock.sub_resync_table()`
 
-## SYNOPSIS
+### SYNOPSIS
 
-`spock.sub-resync-table (SUBSCRIPTION_NAME RELATION DB <flags>)`
+`spock.sub_resync_table (subscription_name name, relation regclass)`
  
-## DESCRIPTION
+### DESCRIPTION
 
 Resynchronize one existing table. 
 
-## EXAMPLE
+### EXAMPLE
 
-`spock.sub-resync-table (sub_n2n1 mytable demo)`
+`spock.sub-resync-table ('sub_n2n1', 'mytable')`
  
-## POSITIONAL ARGUMENTS
-    SUBSCRIPTION_NAME
-        The name of the subscription. Example: sub_n2n1
-    RELATION
-        Table name. Example: mytable
-    DB
-        The name of the database. Example: demo
- 
-## FLAGS
-    -t, --truncate=TRUNCATE
-        WARNING: If this is set to `True`, the function will truncate the table immediately, and only then begin synchronising it, so it will be empty while being synced.
-    
+### POSITIONAL ARGUMENTS
+    `subscription_name`
+        The name of the existing subscription.
+    `relation`
+        The name of existing table, optionally qualified.
