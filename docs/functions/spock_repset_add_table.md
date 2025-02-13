@@ -12,7 +12,7 @@ Add a table or tables to a replication set.
 
 ### EXAMPLE
 
-`spock.repset_add_table ('demo_repset', 'public.*')`
+`spock.repset_add_table ('demo_repset', 'public.my_table')`
  
 ### ARGUMENTS
     set_name
