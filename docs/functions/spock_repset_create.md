@@ -1,35 +1,27 @@
 ## NAME
 
-`spock.repset-create()`
+`spock.repset_create()`
 
-## SYNOPSIS
+### SYNOPSIS
 
-`spock.repset-create (SET_NAME DB <flags>)`
+`spock.repset_create (set_name name, replicate_insert bool, replicate_update bool, replicate_delete bool, replicate_truncate bool)`
  
-## DESCRIPTION
+### DESCRIPTION
 
 Create a replication set. 
 
-## EXAMPLE
+### EXAMPLE
 
-`spock.repset-create (demo_repset demo)`
+`spock.repset_create ('demo_repset')`
  
-## POSITIONAL ARGUMENTS
-    SET_NAME
-        The name of the replication set. Example: demo_repset
-    DB
-        The name of the database. Example: demo
- 
-## FLAGS
-    --replicate_insert=REPLICATE_INSERT
-        For tables in this replication set, set to `true` to replicate inserts; the default is `true`.
-    
-    --replicate_update=REPLICATE_UPDATE
-        For tables in this replication set, set to `true` to replicate updates; the default is `true`.
-    
-    --replicate_delete=REPLICATE_DELETE
-        For tables in this replication set, set to `true` to replicate deletes; the default is `true`.
-    
-    --replicate_truncate=REPLICATE_TRUNCATE
-        For tables in this replication set, set to `true` to replicate truncate; the default is `true`.
-    
+### ARGUMENTS
+    `set_name`
+        The name of the set, must be unique.
+    `replicate_insert`
+        Specifies if `INSERT` statements are replicated, default `true`.
+    `replicate_update`
+        Specifies if `UPDATE` statements are replicated, default `true`.
+    `replicate_delete`
+        Specifies if `DELETE` statements are replicated, default `true`.
+    `replicate_truncate`
+        Specifies if `TRUNCATE` statements are replicated, default `true`.
