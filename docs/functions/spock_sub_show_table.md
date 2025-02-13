@@ -1,23 +1,21 @@
 ## NAME
 
-`spock.sub-show-table()`
+`spock.sub_show_table()`
 
-## SYNOPSIS
+### SYNOPSIS
     
-`spock.sub-show-table (SUBSCRIPTION_NAME RELATION DB)`
+`spock.sub_show_table (subscription_name name, relation regclass)`
  
-## DESCRIPTION
+### DESCRIPTION
     
 Shows synchronization status of a table. 
 
-## EXAMPLE
+### EXAMPLE
 
-`spock.sub-show-table (sub_n2n1 mytable demo)`
+`spock.sub_show_table ('sub_n2n1', 'mytable')`
  
-## POSITIONAL ARGUMENTS
-    SUBSCRIPTION_NAME
-        The name of the subscription. Example: `sub_n2n1`
-    RELATION
-        Table name. Example: `mytable`
-    DB
-        The name of the database. Example: `demo`
+### POSITIONAL ARGUMENTS
+    `subscription_name`
+        The name of the existing subscription.
+    `relation` 
+        The name of existing table, optionally qualified.
