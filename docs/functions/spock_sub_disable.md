@@ -14,12 +14,8 @@
 `spock sub_disable 'sub_n2n1'`
  
 ### ARGUMENTS
-    `subscription_name`
+    subscription_name
         The name of the existing subscription.
-    `immediate`
-        If `true`, the subscription is stopped immediately, otherwise it will be only stopped at the end of current transaction; the default is `false`.
+    immediate
+        If true, the subscription is stopped immediately, otherwise it will be only stopped at the end of current transaction; the default is false.
  
-### FLAGS
-    -i, --immediate=IMMEDIATE
-        Tells Spock when to stop the subscription. If set to `true`, the subscription is stopped immediately; if set to `false` (the default), it will be only stopped at the end of current transaction.
-    
