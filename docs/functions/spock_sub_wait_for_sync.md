@@ -16,6 +16,6 @@ For best results, run `SELECT spock.wait_slot_confirm_lsn(NULL, NULL)` on the  p
 
 `spock.sub_wait_for_sync ('sub_n2n1')`
  
-### POSITIONAL ARGUMENTS
-    `subscription_name`
-        The name of the subscription. Example: `sub_n2n1`
+### ARGUMENTS
+    subscription_name
+        The name of the subscription. Example: sub_n2n1
