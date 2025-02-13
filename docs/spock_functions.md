@@ -14,6 +14,7 @@ The following functions are included in the `spock` extension:
 | [repset_add_partition](functions/spock_repset_add_partition.md) | Add a partition to a replication set.
 | [repset_add_seq](functions/spock_repset_add_seq.md) | Add a sequence to a replication set.
 | [repset_add_table](functions/spock_repset_add_table.md) | Add table(s) to replication set.
+| [repset_add_all_tables](functions/spock_repset_add_all_tables.md) | Add all existing table(s) to the replication set.
 | [repset_alter](functions/spock_repset_alter.md) | Modify a replication set.
 | [repset_create](functions/spock_repset_create.md) | Define a replication set.
 | [repset_drop](functions/spock_repset_drop.md) | Remove a replication set.
