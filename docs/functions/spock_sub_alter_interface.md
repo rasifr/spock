@@ -15,7 +15,7 @@ Alter the subscription to use a different interface when connecting to the provi
 `spock.sub_alter_interface ('sub_n2n1', 'n1_2 demo')`
  
 ### POSITIONAL ARGUMENTS
-    `subscription_name`
+    subscription_name
         The name of an existing subscription.
-    `interface_name`
+    interface_name
         The name of an existing interface of the current provider node.
