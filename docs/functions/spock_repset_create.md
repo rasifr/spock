@@ -15,13 +15,14 @@ Create a replication set.
 `spock.repset_create ('demo_repset')`
  
 ### ARGUMENTS
+
     `set_name`
         The name of the set, must be unique.
     `replicate_insert`
-        Specifies if `INSERT` statements are replicated, default `true`.
+        Specifies if INSERT statements are replicated; the default is true.
     `replicate_update`
-        Specifies if `UPDATE` statements are replicated, default `true`.
+        Specifies if UPDATE statements are replicated; the default is true.
     `replicate_delete`
-        Specifies if `DELETE` statements are replicated, default `true`.
+        Specifies if DELETE statements are replicated; the default is true.
     `replicate_truncate`
-        Specifies if `TRUNCATE` statements are replicated, default `true`.
+        Specifies if TRUNCATE statements are replicated; the default is true.
