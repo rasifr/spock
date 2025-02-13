@@ -14,6 +14,6 @@ Show the status and basic information of a subscription.
 
 `spock.sub_show_status ('sub_n2n1')`
  
-### POSITIONAL ARGUMENTS
-    `subscription_name`
+### ARGUMENTS
+    subscription_name
         The optional name of the existing subscription.  If no name is provided, the function will show status for all subscriptions on the local node.
