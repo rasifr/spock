@@ -20,6 +20,8 @@ The following functions are included in the `spock` extension:
 | [repset_drop](functions/spock_repset_drop.md) | Remove a replication set.
 | [repset_list_tables](functions/spock_repset_list_tables.md) | List tables in replication sets.
 | [repset_remove_partition](functions/spock_repset_remove_partition.md) | Remove a partition from the replication set that the parent table is a part of.
+| [repset_add_seq](functions/spock_repset_add_seq.md) | Adds a sequence to a replication set.
+| [repset_add_all_seqs](functions/spock_repset_add_all_seqs.md) | Adds all sequences from the specified schemas to a replication set.
 | [repset_remove_seq](functions/spock_repset_remove_seq.md) | Remove a sequence from a replication set.
 | [repset_remove_table](functions/spock_repset_remove_table.md) | Remove table from replication set.
 | **Subscription Management Functions** | |
