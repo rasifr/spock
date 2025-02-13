@@ -40,6 +40,3 @@ The following functions are included in the `spock` extension:
 | [replicate_ddl](functions/spock_replicate_ddl.md) | Enable DDL replication.
 | [sequence_convert](functions/spock_sequence_convert.md) | Convert sequence(s) to snowflake sequences. 
 | [set_readonly](functions/spock_set_readonly.md) | Turn PostgreSQL read_only mode 'on' or 'off'.
-| [health_check](functions/spock_health_check.md) | Check to see if the PostgreSQL instance is accepting connections.
-| [metrics_check](functions/spock_metrics_check.md) | Retrieve advanced database and operating system metrics.
-
