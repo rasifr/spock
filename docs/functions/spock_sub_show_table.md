@@ -15,7 +15,7 @@ Shows synchronization status of a table.
 `spock.sub_show_table ('sub_n2n1', 'mytable')`
  
 ### POSITIONAL ARGUMENTS
-    `subscription_name`
+    subscription_name
         The name of the existing subscription.
-    `relation` 
+    relation 
         The name of existing table, optionally qualified.
