@@ -16,13 +16,13 @@ Add a table or tables to a replication set.
  
 ### ARGUMENTS
     set_name
-        The name of the existing replication set
+        The name of the existing replication set.
     relation
-        The name or OID of the table to be added to the set
+        The name or OID of the table to be added to the set.
     sync_data
         If true, the table data is synchronized on all subscribers which are subscribed to given replication set; the default is false.
     columns
-        A list of columns to replicate. Normally when all columns should be replicated, this will be set to NULL which is the default
+        A list of columns to replicate. Normally when all columns should be replicated, this will be set to NULL (the default).
     row_filter
         A row filtering expression; the default is NULL (no filtering).
     
