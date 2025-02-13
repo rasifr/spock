@@ -16,6 +16,4 @@ Show the status and basic information of a subscription.
  
 ### POSITIONAL ARGUMENTS
     `subscription_name`
-        The optional name of the existing subscription, when no
-    name was provided, the function will show status for all subscriptions on
-    local node
+        The optional name of the existing subscription.  If no name is provided, the function will show status for all subscriptions on the local node.
