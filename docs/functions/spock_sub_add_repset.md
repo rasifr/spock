@@ -1,23 +1,21 @@
 ## NAME
 
-`spock.sub-add-repset()`
+`spock.sub_add_repset()`
 
-## SYNOPSIS
+### SYNOPSIS
 
-`spock.sub-add-repset (SUBSCRIPTION_NAME REPLICATION_SET DB)`
+`spock.sub_add_repset (subscription_name name, replication_set name)`
  
-## DESCRIPTION
+### DESCRIPTION
 
 Adds one replication set into a subscriber. Does not synchronize, only activates consumption of events.
 
-## EXAMPLE
+### EXAMPLE
 
-`spock.sub-add-repset (sub_n2n1 demo_repset demo)`
+`spock.sub_add_repset ('sub_n2n1', 'demo_repset')`
  
-## POSITIONAL ARGUMENTS
-    SUBSCRIPTION_NAME
-        The name of the subscription. Example: sub_n2n1
-    REPLICATION_SET
-        Name of a replication set. Example: demo_repset
-    DB
-        The name of the database. Example: demo
+### POSITIONAL ARGUMENTS
+    `subscription_name`
+        The name of the existing subscription.
+    `replication_set`
+        The name of replication set to add.
