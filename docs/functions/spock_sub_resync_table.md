@@ -15,7 +15,7 @@ Resynchronize one existing table.
 `spock.sub-resync-table ('sub_n2n1', 'mytable')`
  
 ### POSITIONAL ARGUMENTS
-    `subscription_name`
+    subscription_name
         The name of the existing subscription.
-    `relation`
-        The name of existing table, optionally qualified.
+    relation
+        The name of existing table, optionally schema qualified.
