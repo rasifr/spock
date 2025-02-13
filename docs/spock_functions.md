@@ -4,7 +4,7 @@ The following functions are included in the `spock` extension:
 
 | Command  | Description |
 |----------|-------------| 
-| **Node Management Functions** | |
+| **Node Management Functions** | Nodes can be added and removed dynamically using the SQL interfaces.|
 | [node_add_interface](functions/spock_node_add_interface.md) | Add a new node interface.
 | [node_create](functions/spock_node_create.md) | Define a node for spock.
 | [node_drop](functions/spock_node_drop.md) | Remove a spock node.
