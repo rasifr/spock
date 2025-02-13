@@ -23,11 +23,11 @@ For more information about the Spock extension's advanced functionality, visit [
 
 ## Building the Spock Extension
 
-You need to use the `spock` extension with a copy of PostgreSQL that is [configured for your system with version-specific .diff files from the `patches` directory (also in this repository) applied before building](https://www.postgresql.org/docs/17/install-make.html#INSTALL-PROCEDURE-MAKE).
+You need to use the `spock` extension with a copy of PostgreSQL that is configured for your system with version-specific .diff files from the `patches` directory (also in this repository) [applied before building](https://www.postgresql.org/docs/17/install-make.html#INSTALL-PROCEDURE-MAKE).
 
 After building your copy of PostgreSQL, build the spock extension from source code, using a build process [much like any other PostgreSQL extension](https://www.postgresql.org/docs/17/extend-extensions.html); after downloading the source from this repository, then `make` and `make-install` the code.
 
-Then, use the `CREATE EXTENSION` command to install the `spock` extension on each node in the database you wish to replicate:
+Then, use the [`CREATE EXTENSION`](https://www.postgresql.org/docs/17/sql-createextension.html) command to install the `spock` extension on each node in the database you wish to replicate:
 
 `CREATE EXTENSION spock;`
 
