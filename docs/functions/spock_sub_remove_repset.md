@@ -19,7 +19,7 @@ spock defaults to enabling TCP keepalives to ensure that it notices when the ups
 `spock.sub_remove_repset ('sub_n2n1', 'demo_repset')`
  
 ### POSITIONAL ARGUMENTS
-    `subscription_name`
+    subscription_name
         The name of the existing subscription.
-    `replication_set` 
+    replication_set 
         The name of replication set to remove.
