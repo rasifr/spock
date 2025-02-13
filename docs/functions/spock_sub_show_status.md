@@ -1,21 +1,21 @@
 ## NAME
 
-`spock.sub-show-status()`
+`spock.sub_show_status()`
 
-## SYNOPSIS
+### SYNOPSIS
 
-`spock.sub-show-status (SUBSCRIPTION_NAME DB)`
+`spock.sub_show_status (subscription_name name)`
  
-## DESCRIPTION
+### DESCRIPTION
 
 Show the status and basic information of a subscription. 
 
-## EXAMPLE
+### EXAMPLE
 
-`spock.sub-show-status (sub_n2n1 demo)`
+`spock.sub_show_status ('sub_n2n1')`
  
-## POSITIONAL ARGUMENTS
-    SUBSCRIPTION_NAME
-        The name of the subscription. Example: sub_n2n1
-    DB
-        The name of the database. Example: demo
+### POSITIONAL ARGUMENTS
+    `subscription_name`
+        The optional name of the existing subscription, when no
+    name was provided, the function will show status for all subscriptions on
+    local node
