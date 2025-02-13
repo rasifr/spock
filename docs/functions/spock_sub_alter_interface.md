@@ -1,23 +1,21 @@
 ## NAME
 
-`spock.sub-alter-interface()`
+`spock.sub_alter_interface()`
 
-## SYNOPSIS
+### SYNOPSIS
     
-`spock.sub-alter-interface (SUBSCRIPTION_NAME INTERFACE_NAME DB)`
+`spock.sub_alter_interface (subscription_name name, interface_name name)`
  
-## DESCRIPTION
+### DESCRIPTION
 
 Alter the subscription to use a different interface when connecting to the provider node.
 
-## EXAMPLE
+### EXAMPLE
 
-`spock sub-alter-interface (sub_n2n1 n1_2 demo)`
+`spock.sub_alter_interface ('sub_n2n1', 'n1_2 demo')`
  
-## POSITIONAL ARGUMENTS
-    SUBSCRIPTION_NAME
-        The name of the subscription. Example: sub_n2n1
-    INTERFACE_NAME
-        The interface name to add to the node. Should match an interface name already created on the provider node. Example: n1_2
-    DB
-        The name of the database. Example: demo
+### POSITIONAL ARGUMENTS
+    `subscription_name`
+        The name of an existing subscription.
+    `interface_name`
+        The name of an existing interface of the current provider node.
