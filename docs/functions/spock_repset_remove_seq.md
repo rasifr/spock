@@ -1,21 +1,21 @@
 ## NAME
 
-`spock.repset_remove_table ()`
+`spock.repset_remove_seq ()`
 
 ### SYNOPSIS
 
-`spock.repset_remove_table (set_name name, relation regclass)`
+`spock.repset_remove_seq (set_name name, relation regclass)`
  
 ### DESCRIPTION
 
-Remove a table from a replication set. 
+Remove a sequence from a replication set. 
 
 ### EXAMPLE 
 
-`spock.repset_remove_table ('demo_repset', 'public.mytable')`
+`spock.repset_remove_sequence ('demo_repset', 'public.mysequence')`
  
 ### POSITIONAL ARGUMENTS
     set_name
         The name of the existing replication set.
     relation
-        The name or OID of the table to be removed from the set.
+        The name or OID of the sequence to be removed from the set.
