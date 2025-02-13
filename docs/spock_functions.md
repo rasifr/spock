@@ -10,7 +10,9 @@ The following functions are included in the `spock` extension:
 | [node_drop](functions/spock_node_drop.md) | Remove a spock node.
 | [node_drop_interface](functions/spock_node_drop_interface.md) | Delete a node interface.
 | [node_list](functions/spock_node_list.md) | Display a table listing the current nodes.
-| **Replication Set Management Functions** | |
+| **Replication Set Management Functions** | Replication sets provide a mechanism to control which tables in the database will be replicated and which actions on those tables will be replicated.  Each replicated set can specify individually if `INSERTs`, `UPDATEs`, `DELETEs` and `TRUNCATEs` on the set are replicated. Each table can be in multiple replication sets, and each subscriber can subscribe to multiple replication sets. The resulting set of tables and actions replicated is the union of the sets the table is in. The tables are not replicated until they are added into a replication set.
+
+There are three preexisting replication sets named "default", "default_insert_only" and "ddl_sql". The "default" replication set is defined to replicate all changes to tables in it. The "default_insert_only" only replicates INSERTs and is meant for tables that don't have primary key. The "ddl_sql" replication set is defined to replicate schema changes specified by `spock.replicate_ddl`.|
 | [repset_add_partition](functions/spock_repset_add_partition.md) | Add a partition to a replication set.
 | [repset_add_seq](functions/spock_repset_add_seq.md) | Add a sequence to a replication set.
 | [repset_add_table](functions/spock_repset_add_table.md) | Add table(s) to replication set.
