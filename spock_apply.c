@@ -1024,6 +1024,10 @@ handle_commit(StringInfo s)
 		{
 			replorigin_session_origin_lsn = end_lsn;
 		}
+elog(WARNING, "===========> SPOCK %s: COMMIT  origin %X/%X, end_lsn %X/%X",
+		 MySubscription->name,
+		 LSN_FORMAT_ARGS(replorigin_session_origin_lsn),
+		 LSN_FORMAT_ARGS(end_lsn));
 
 		/* Have the commit code adjust our logical clock if needed */
 		remoteTransactionStopTimestamp = commit_time;
@@ -1868,7 +1872,12 @@ spock_apply_worker_shmem_exit(int code, Datum arg)
 	 * on_proc_exit because the backend may also clean up the origin
 	 * in certain cases, and we want to avoid duplicate cleanup.
 	 */
-	replorigin_session_reset();
+	elog(WARNING, "===========> SPOCK %s: EXIT origin %X/%X",
+		 MySubscription->name,
+		 LSN_FORMAT_ARGS(replorigin_session_origin_lsn));
+	replorigin_session_origin = InvalidRepOriginId;
+	replorigin_session_origin_lsn = InvalidXLogRecPtr;
+	replorigin_session_origin_timestamp = 0;
 }
 
 /*
@@ -2740,7 +2749,7 @@ apply_work(PGconn *streamConn)
 	TimestampTz last_receive_timestamp = GetCurrentTimestamp();
 	bool		need_replay;
 	ErrorData  *edata;
-	RepOriginId originid;
+	// RepOriginId originid;
 
 	applyconn = streamConn;
 	fd = PQsocket(applyconn);
@@ -2763,8 +2772,10 @@ apply_work(PGconn *streamConn)
 	if (MyApplyWorker->apply_group == NULL)
 		spock_apply_worker_attach(); /* Attach this worker. */
 
-	originid = replorigin_session_origin;
+	//originid = replorigin_session_origin;
 stream_replay:
+elog(WARNING, "===========> SPOCK %s: stream_replay: Started",
+		 MySubscription->name);
 
 	need_replay = false;
 
@@ -3033,6 +3044,10 @@ stream_replay:
 				 */
 				if (exception_behaviour == SUB_DISABLE)
 				{
+					elog(WARNING, "===========> SPOCK %s: disable TRY ctx: %s",
+							MySubscription->name,
+							CurrentMemoryContext->name);
+
 					spock_disable_subscription(MySubscription,
 								remote_origin_id,
 								remote_xid,
@@ -3044,6 +3059,7 @@ stream_replay:
 					 * and replication origin state will be cleaned up automatically,
 					 * so no explicit reset is needed.
 					 */
+					//replorigin_session_reset();
 					return;
 				}
 			}
@@ -3108,6 +3124,10 @@ stream_replay:
 			 */
 			if (exception_behaviour == SUB_DISABLE)
 			{
+				elog(WARNING, "===========> SPOCK %s: disable CATCH ctx: %s",
+						MySubscription->name,
+						CurrentMemoryContext->name);
+
 				spock_disable_subscription(MySubscription,
 							remote_origin_id,
 							remote_xid,
@@ -3120,6 +3140,7 @@ stream_replay:
 				 * and replication origin state will be cleaned up automatically,
 				 * so no explicit reset is needed.
 				 */
+				//replorigin_session_reset();
 				return;
 			}
 		}
@@ -3163,7 +3184,7 @@ stream_replay:
 		elog(LOG, "SPOCK: caught initial exception - %s", edata->message);
 
 		/* reset replication session to avoid reuse of it after error. */
-		replorigin_session_reset();
+		//replorigin_session_reset();
 		FlushErrorState();
 
 		MemoryContextReset(MessageContext);
@@ -3185,8 +3206,8 @@ stream_replay:
 		MyApplyWorker->use_try_block = true;
 
 		/* Its possible that origin session may have been reset above */
-		replorigin_session_setup(originid);
-		replorigin_session_origin = originid;
+		// replorigin_session_setup(originid);
+		// replorigin_session_origin = originid;
 
 		goto stream_replay;
 	}
@@ -4081,7 +4102,10 @@ spock_apply_main(Datum main_arg)
 	replorigin_session_setup(originid);
 	replorigin_session_origin = originid;
 	origin_startpos = replorigin_session_get_progress(false);
-
+	elog(WARNING, "===========> SPOCK %s: slot %s, origin %d, lsn %X/%X",
+		 MySubscription->name,
+		 MySubscription->slot_name, originid,
+		 LSN_FORMAT_ARGS(origin_startpos));
 	/* Start the replication. */
 	streamConn = spock_connect_replica(MySubscription->origin_if->dsn,
 									   MySubscription->slot_name, NULL);
