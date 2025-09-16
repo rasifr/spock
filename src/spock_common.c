@@ -519,3 +519,81 @@ spock_build_replindex_scan_key(ScanKey skey, Relation rel, Relation idxrel,
 
 	return skey_attoff;
 }
+
+/*
+ * Read exactly nbytes into buf or ERROR out. Never returns partial.
+ */
+void
+read_buf(int fd, void *buf, size_t nbytes, const char *filename)
+{
+	char	   *p = (char *) buf;
+	size_t		left = nbytes;
+
+	if (p == NULL || nbytes == 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid buffer or size for %s", filename ? filename : "read")));
+
+	while (left > 0)
+	{
+		ssize_t		n = read(fd, p, left);
+
+		if (n < 0)
+		{
+			if (errno == EINTR)
+				continue;		/* retry */
+			ereport(ERROR,
+					(errcode(ERRCODE_DATA_CORRUPTED),
+					 errmsg("could not read file \"%s\": read %zu of %zu",
+							filename ? filename : "file", n, nbytes)));
+		}
+		else if (n == 0)
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_DATA_CORRUPTED),
+					 errmsg("could not read file \"%s\": %m", filename ? filename : "file")));
+		}
+
+		p += n;
+		left -= (size_t) n;
+	}
+}
+
+/*
+ * Write exactly nbytes into file or ERROR out. Never partial.
+ */
+void
+write_buf(int fd, const void *buf, size_t nbytes, const char *filename)
+{
+	const char *p = (const char *) buf;
+	size_t		left = nbytes;
+
+	if (p == NULL || nbytes == 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid buffer or size for %s", filename ? filename : "write")));
+
+	while (left > 0)
+	{
+		ssize_t		n = write(fd, p, left);
+
+		if (n < 0)
+		{
+			if (errno == EINTR)
+				continue;
+			ereport(ERROR,
+					(errcode(ERRCODE_DATA_CORRUPTED),
+					 errmsg("could not write file \"%s\": %m", filename ? filename : "file")));
+		}
+		else if (n == 0)
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_DATA_CORRUPTED),
+					 errmsg("could not write file \"%s\": write %zu of %zu",
+							filename ? filename : "file", n, nbytes)));
+		}
+
+		p += n;
+		left -= (size_t) n;
+	}
+}
