@@ -529,38 +529,47 @@ spock_build_replindex_scan_key(ScanKey skey, Relation rel, Relation idxrel,
 void
 read_buf(int fd, void *buf, size_t nbytes, const char *filename)
 {
-	char	   *p = (char *) buf;
-	size_t		left = nbytes;
+	const char *fname = filename ? filename : "file";
+	size_t off = 0;
 
-	if (p == NULL || nbytes == 0)
+	/* Input validation (CWE-20) */
+	if (fd < 0 || buf == NULL || nbytes == 0 || nbytes > (size_t)SSIZE_MAX)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("invalid buffer or size for %s", filename ? filename : "read")));
+				 errmsg("invalid fd/buffer/size for %s", fname)));
 
-	while (left > 0)
+	while (off < nbytes)
 	{
-		ssize_t		n = read(fd, p, left);
+		ssize_t n = read(fd, (char *)buf + off, nbytes - off);
 
+		if (n > 0)
+		{
+			/* Explicit bound check to satisfy analyzers (CWE-120) */
+			if ((size_t)n > (nbytes - off))
+				ereport(ERROR,
+						(errcode(ERRCODE_DATA_CORRUPTED),
+						 errmsg("read overflow while reading \"%s\"", fname)));
+
+			off += (size_t)n;
+			continue;
+		}
+
+		if (n == -1 && errno == EINTR)
+			continue; /* retry */
+
+		/* One consolidated error path: EOF or hard error */
 		if (n < 0)
-		{
-			if (errno == EINTR)
-				continue;		/* retry */
 			ereport(ERROR,
 					(errcode(ERRCODE_DATA_CORRUPTED),
-					 errmsg("could not read file \"%s\": read %zu of %zu",
-							filename ? filename : "file", n, nbytes)));
-		}
-		else if (n == 0)
-		{
-			ereport(ERROR,
-					(errcode(ERRCODE_DATA_CORRUPTED),
-					 errmsg("could not read file \"%s\": %m", filename ? filename : "file")));
-		}
+				 	 errmsg("could not read file \"%s\": %m", fname)));
 
-		p += n;
-		left -= (size_t) n;
+		ereport(ERROR,
+				(errcode(ERRCODE_DATA_CORRUPTED),
+					errmsg("could not read file \"%s\": read %zu of %zu",
+						fname, off, nbytes)));
 	}
 }
+
 
 /*
  * Write exactly nbytes into file or ERROR out. Never partial.
@@ -568,36 +577,31 @@ read_buf(int fd, void *buf, size_t nbytes, const char *filename)
 void
 write_buf(int fd, const void *buf, size_t nbytes, const char *filename)
 {
-	const char *p = (const char *) buf;
-	size_t		left = nbytes;
+	const char *fname = filename ? filename : "file";
+	size_t off = 0;
 
-	if (p == NULL || nbytes == 0)
+	/* Input validation (CWE-20) */
+	if (fd < 0 || buf == NULL || nbytes == 0 || nbytes > (size_t)SSIZE_MAX)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("invalid buffer or size for %s", filename ? filename : "write")));
+				 errmsg("invalid fd/buffer/size for %s", fname)));
 
-	while (left > 0)
+	while (off < nbytes)
 	{
-		ssize_t		n = write(fd, p, left);
+		ssize_t		n = write(fd, (char *)buf + off, nbytes - off);
 
-		if (n < 0)
+		if (n > 0)
 		{
-			if (errno == EINTR)
-				continue;
-			ereport(ERROR,
-					(errcode(ERRCODE_DATA_CORRUPTED),
-					 errmsg("could not write file \"%s\": %m", filename ? filename : "file")));
-		}
-		else if (n == 0)
-		{
-			ereport(ERROR,
-					(errcode(ERRCODE_DATA_CORRUPTED),
-					 errmsg("could not write file \"%s\": write %zu of %zu",
-							filename ? filename : "file", n, nbytes)));
+			off += (size_t)n;
+			continue;
 		}
 
-		p += n;
-		left -= (size_t) n;
+		if (n == -1 && errno == EINTR)
+			continue; /* retry */
+
+			ereport(ERROR,
+					(errcode(ERRCODE_DATA_CORRUPTED),
+					 errmsg("could not write file \"%s\": %m", fname)));
 	}
 }
 
