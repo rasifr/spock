@@ -36,7 +36,7 @@ my $prov_dsn_2 = "host=$host port=$ports->[1] dbname=$dbname user=$user";
 
 # Create subscriptions on both nodes to each other
 psql_or_bail(1, "SELECT spock.sub_create('test_sub_n1', '$prov_dsn_2')");
-psql_or_bail(2, "SELECT spock.sub_create('test_sub_n2', '$prov_dsn_1')");
+psql_or_bail(1, "SELECT nspname, relname, set_name FROM spock.tables");
 
 # Create schema, table and function on provider (node 1)
 psql_or_bail(1, "CREATE SCHEMA hollywood
@@ -55,7 +55,7 @@ psql_or_bail(1, "SELECT auto_ddl_test()");
 psql_or_bail(1, "INSERT INTO test1 VALUES (1, 'one'), (2, 'two')");
 my $syncevent = scalar_query(1, "SELECT spock.sync_event()");
 $syncevent = "'$syncevent'";
-
+diag("syncevent =======> $syncevent");
 ok(wait_until(30, sub {
   scalar_query(2, "SELECT status FROM spock.sub_show_status('test_sub_n2')") eq 'replicating'
 }), 'subscription is replicating');
@@ -64,6 +64,8 @@ ok(wait_until(30, sub {
 psql_or_bail(2, "CALL spock.wait_for_sync_event(true, 'n1', $syncevent)");
 
 diag(psql_or_bail(2, "SELECT * FROM spock.tables"));
+diag(psql_or_bail(2, "SELECT * FROM spock.progress"));
+diag(psql_or_bail(2, "SELECT * FROM spock.queue"));
 # Check schema, table and function appear on subscriber (node 2)
 ok(scalar_query(2, "SELECT count(*) FROM spock.tables where nspname = 'hollywood' AND set_name IS NOT NULL") eq '2',
 	'schema tables exists on n2');
@@ -77,6 +79,5 @@ ok(scalar_query(2, "SELECT count(*) FROM spock.tables where (relname = 'test2' o
 # Cleanup
 diag(psql_or_bail(2, "SELECT * from spock.node"));
 psql_or_bail(1, "SELECT spock.sub_drop('test_sub_n1')");
-psql_or_bail(2, "SELECT spock.sub_drop('test_sub_n2')");
 destroy_cluster('Destroy 2-node cluster');
 done_testing();
