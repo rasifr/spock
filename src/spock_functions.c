@@ -643,16 +643,15 @@ Datum spock_drop_subscription(PG_FUNCTION_ARGS)
 	char *sub_name = NameStr(*PG_GETARG_NAME(0));
 	bool ifexists = PG_GETARG_BOOL(1);
 	SpockSubscription *sub;
+	SpockLocalNode *node;
 
+	node = get_local_node(true, false);
 	sub = get_subscription_by_name(sub_name, ifexists);
 
 	if (sub != NULL)
 	{
 		SpockWorker *apply;
 		List *other_subs;
-		SpockLocalNode *node;
-
-		node = get_local_node(true, false);
 
 		/* First drop the status. */
 		drop_subscription_sync_status(sub->id);
