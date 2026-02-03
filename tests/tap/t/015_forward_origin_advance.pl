@@ -97,10 +97,10 @@ is($count_c, '1', 'Data from A reached C via B');
 # On main branch: This origin will NOT exist (test fails)
 # On fix branch: This origin WILL exist (test passes)
 #
-# The origin uses slot name format: spk_<db>_<provider>_<subscriber>
-# e.g., "spk_regression_n1_n3" for forwarded transactions from n1 to n3
+# The origin uses slot name format: spk_<db>_<provider>_<subscription>
+# e.g., "spk_regression_n1_sub_b_to_c" for forwarded transactions from n1 via sub_b_to_c
 
-my $expected_origin = scalar_query(3, "SELECT spock.spock_gen_slot_name(current_database()::name, 'n1'::name, 'n3'::name)");
+my $expected_origin = scalar_query(3, "SELECT spock.spock_gen_slot_name(current_database()::name, 'n1'::name, 'sub_b_to_c'::name)");
 diag("Expected forwarded origin name on C: $expected_origin");
 
 my $origin_exists = scalar_query(3, "SELECT COUNT(*) FROM pg_replication_origin WHERE roname = '$expected_origin'");
