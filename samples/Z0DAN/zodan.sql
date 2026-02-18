@@ -55,7 +55,7 @@ BEGIN
     IF src_version IS NULL THEN
         RAISE EXCEPTION 'Spock extension not found on source node';
     END IF;
-    
+
     -- Check source node has required version (strip -devel suffix for comparison)
     IF regexp_replace(src_version, '-devel$', '') < min_required_version THEN
         RAISE EXCEPTION 'Spock version mismatch: source node has version %, but minimum required version is %. Please upgrade all nodes to at least %.',
@@ -71,7 +71,7 @@ BEGIN
     IF new_version IS NULL THEN
         RAISE EXCEPTION 'Spock extension not found on new node';
     END IF;
-    
+
     -- Check new node has required version (strip -devel suffix for comparison)
     IF regexp_replace(new_version, '-devel$', '') < min_required_version THEN
         RAISE EXCEPTION 'Spock version mismatch: new node has version %, but minimum required version is %. Please upgrade all nodes to at least %.',
@@ -95,7 +95,7 @@ BEGIN
         IF node_version IS NULL THEN
             RAISE EXCEPTION 'Spock extension not found on node %', node_rec.node_name;
         END IF;
-        
+
         IF regexp_replace(node_version, '-devel$', '') < min_required_version THEN
             version_mismatch := true;
             RAISE EXCEPTION 'Spock version mismatch: node % has version %, but required version is at least %. All nodes must have version % or later.',
@@ -570,131 +570,6 @@ BEGIN
 END;
 $$;
 
-
--- ============================================================================
-
-
--- ============================================================================
--- Procedure: get_commit_timestamp
--- Purpose : Retrieves the commit timestamp for replication lag between two nodes.
--- Arguments:
---   node_dsn - DSN string to connect to the remote node.
---   n1       - Origin node name.
---   n2       - Receiver node name.
---   verb     - Verbose output flag
---   commit_ts - OUT parameter to receive the commit timestamp
--- Usage    : CALL get_commit_timestamp(node_dsn, 'n1', 'n2', true, NULL);
--- ============================================================================
-
-CREATE OR REPLACE PROCEDURE spock.get_commit_timestamp(
-    node_dsn text,
-    n1 text,
-    n2 text,
-    verb boolean,
-    INOUT commit_ts timestamp DEFAULT NULL
-)
-LANGUAGE plpgsql
-AS
-$$
-DECLARE
-    ts_rec RECORD;
-    remotesql text;
-BEGIN
-    -- Build remote SQL to fetch commit timestamp from lag_tracker
-    remotesql := format(
-        'SELECT commit_timestamp FROM spock.lag_tracker WHERE origin_name = %L AND receiver_name = %L',
-        n1, n2
-    );
-
-    IF verb THEN
-        RAISE NOTICE '[QUERY] %', remotesql;
-    END IF;
-
-    -- Execute remote SQL and capture the commit timestamp
-    SELECT * FROM dblink(node_dsn, remotesql) AS t(commit_timestamp timestamp) INTO ts_rec;
-
-    IF verb THEN
-        RAISE NOTICE E'[STEP] Commit timestamp for lag between "%" and "%": %', n1, n2, ts_rec.commit_timestamp;
-    END IF;
-
-    commit_ts := ts_rec.commit_timestamp;
-END;
-$$;
-
-
--- ============================================================================
-
-
--- ============================================================================
--- Procedure: advance_replication_slot
--- Purpose : Advances a logical replication slot to a specific commit timestamp on a remote node via dblink.
--- Arguments:
---   node_dsn      - DSN string to connect to the remote node.
---   slot_name     - Name of the replication slot to advance.
---   sync_timestamp- Commit timestamp to advance the slot to.
---   verb          - Verbose output flag
--- Usage    : CALL advance_replication_slot(node_dsn, slot_name, sync_timestamp, true);
--- ============================================================================
-
-CREATE OR REPLACE PROCEDURE spock.advance_replication_slot(
-    node_dsn text,
-    slot_name text,
-    sync_timestamp timestamp,
-    verb boolean
-)
-LANGUAGE plpgsql
-AS
-$$
-DECLARE
-    remotesql text;
-    slot_advance_result RECORD;
-BEGIN
-    -- ============================================================================
-    -- Step 1: Check if sync_timestamp is NULL
-    -- ============================================================================
-    IF sync_timestamp IS NULL THEN
-        IF verb THEN
-            RAISE NOTICE E'
-        [STEP 1] Commit timestamp is NULL, skipping slot advance for slot "%".
-        ', slot_name;
-        END IF;
-        RETURN;
-    END IF;
-
-    -- ============================================================================
-    -- Step 2: Build remote SQL for advancing replication slot
-    -- ============================================================================
-    remotesql := format(
-        'WITH lsn_cte AS (
-            SELECT spock.get_lsn_from_commit_ts(%L, %L::timestamp) AS lsn
-        )
-        SELECT pg_replication_slot_advance(%L, lsn) FROM lsn_cte;',
-        slot_name, sync_timestamp::text, slot_name
-    );
-
-    IF verb THEN
-        RAISE NOTICE '[QUERY] %', remotesql;
-    END IF;
-    IF verb THEN
-        RAISE NOTICE E'
-    [STEP 2] Remote node DSN: %
-    ', node_dsn;
-    END IF;
-
-    -- ============================================================================
-    -- Step 3: Execute slot advance on remote node using dblink
-    -- ============================================================================
-    SELECT * FROM dblink(node_dsn, remotesql) AS t(result text) INTO slot_advance_result;
-
-    IF verb THEN
-        RAISE NOTICE E'
-    [STEP 3] Replication slot "%" advanced to commit timestamp % on remote node: %',
-    slot_name, sync_timestamp, node_dsn;
-    END IF;
-END;
-$$;
-
-
 -- ============================================================================
 
 
@@ -977,361 +852,6 @@ END;
 $$;
 
 -- ============================================================================
--- Procedure: monitor_replication_lag
--- Purpose : Monitors replication lag between nodes on a remote cluster via dblink.
--- Arguments:
---   node_dsn - DSN string to connect to the remote node.
---   verb     - Verbose output flag
--- Usage    : CALL monitor_replication_lag(node_dsn, true);
--- ============================================================================
-
-CREATE OR REPLACE PROCEDURE spock.monitor_replication_lag(node_dsn text, verb boolean)
-LANGUAGE plpgsql
-AS
-$$
-DECLARE
-    remotesql text;
-    node_query text;
-    node_list text := '';
-    lag_vars text := '';
-    lag_assignments text := '';
-    lag_log text := '';
-    lag_conditions text := '';
-    node_rec record;
-    node_count integer := 0;
-BEGIN
-    -- ============================================================================
-    -- Step 1: Get all nodes from the remote cluster
-    -- ============================================================================
-    IF verb THEN
-        RAISE NOTICE '[STEP] Getting nodes from remote cluster: %', node_dsn;
-    END IF;
-
-    -- Get all nodes except the newest one (assuming it's the receiver)
-    FOR node_rec IN
-        SELECT * FROM dblink(node_dsn, 'SELECT node_name FROM spock.node ORDER BY node_id')
-        AS t(node_name text)
-    LOOP
-        node_count := node_count + 1;
-        IF node_count > 1 THEN
-            node_list := node_list || ', ';
-        END IF;
-        node_list := node_list || '''' || node_rec.node_name || '''';
-
-        -- Build lag variable declarations
-        IF node_count > 1 THEN
-            lag_vars := lag_vars || E'\n            ';
-        END IF;
-        lag_vars := lag_vars || 'lag_' || node_rec.node_name || ' interval;';
-        lag_vars := lag_vars || E'\n            lag_' || node_rec.node_name || '_bytes bigint;';
-
-        -- Build lag assignments
-        IF node_count > 1 THEN
-            lag_assignments := lag_assignments || E'\n\n                ';
-        END IF;
-        lag_assignments := lag_assignments || '-- Calculate lag from ' || node_rec.node_name || ' to newest node';
-        lag_assignments := lag_assignments || E'\n                SELECT now() - commit_timestamp, replication_lag_bytes INTO lag_' || node_rec.node_name || ', lag_' || node_rec.node_name || '_bytes';
-        lag_assignments := lag_assignments || E'\n                FROM spock.lag_tracker';
-        lag_assignments := lag_assignments || E'\n                WHERE origin_name = ''''' || node_rec.node_name || ''''' AND receiver_name = (SELECT node_name FROM spock.node ORDER BY node_id DESC LIMIT 1);';
-
-        -- Build lag log message
-        IF node_count > 1 THEN
-            lag_log := lag_log || ', ';
-        END IF;
-        lag_log := lag_log || node_rec.node_name || ' → newest lag: % (bytes: %)';
-
-        -- Build lag conditions
-        IF node_count > 1 THEN
-            lag_conditions := lag_conditions || E'\n                          AND ';
-        END IF;
-        lag_conditions := lag_conditions || 'lag_' || node_rec.node_name || ' IS NOT NULL';
-        lag_conditions := lag_conditions || E'\n                          AND (extract(epoch FROM lag_' || node_rec.node_name || ') < 59 OR lag_' || node_rec.node_name || '_bytes = 0)';
-    END LOOP;
-
-    IF node_count <= 1 THEN
-        RAISE NOTICE '[STEP] Only one node found, skipping lag monitoring';
-        RETURN;
-    END IF;
-
-    -- ============================================================================
-    -- Step 2: Build dynamic remote SQL for monitoring replication lag
-    -- ============================================================================
-    -- Build COALESCE parameters for the log message
-    DECLARE
-        coalesce_params text := '';
-        node_rec2 record;
-    BEGIN
-        FOR node_rec2 IN
-            SELECT * FROM dblink(node_dsn, 'SELECT node_name FROM spock.node ORDER BY node_id')
-            AS t(node_name text)
-        LOOP
-            IF coalesce_params != '' THEN
-                coalesce_params := coalesce_params || ', ';
-            END IF;
-            coalesce_params := coalesce_params || 'COALESCE(lag_' || node_rec2.node_name || '::text, ''NULL''), COALESCE(lag_' || node_rec2.node_name || '_bytes::text, ''NULL'')';
-        END LOOP;
-
-        remotesql := format($sql$
-            DO '
-            DECLARE%s
-            BEGIN
-                LOOP%s
-
-                    -- Log current lag values
-                    RAISE NOTICE ''[MONITOR] %s'',
-                                 %s;
-
-                    -- Exit loop when all lags are below 59 seconds
-                    EXIT WHEN %s;
-
-                    -- Sleep for 1 second before next check
-                    PERFORM pg_sleep(1);
-                END LOOP;
-            END
-            ';
-        $sql$,
-            lag_vars,
-            lag_assignments,
-            lag_log,
-            coalesce_params,
-            lag_conditions
-        );
-    END;
-
-    IF verb THEN
-        RAISE NOTICE '[STEP] Generated monitoring SQL for % nodes: %', node_count, node_list;
-        RAISE NOTICE '[QUERY] %', remotesql;
-    END IF;
-
-    -- ============================================================================
-    -- Step 3: Execute remote monitoring SQL via dblink
-    -- ============================================================================
-    IF verb THEN
-        RAISE NOTICE E'[STEP] monitor_replication_lag: Executing remote monitoring SQL on node: %', node_dsn;
-    END IF;
-    PERFORM dblink(node_dsn, remotesql);
-
-    -- ============================================================================
-    -- Step 4: Log completion of monitoring
-    -- ============================================================================
-    IF verb THEN
-        RAISE NOTICE E'[STEP] monitor_replication_lag: Monitoring replication lag completed on remote node: %', node_dsn;
-    END IF;
-END;
-$$;
-
--- ============================================================================
--- Procedure to monitor replication lag between nodes
--- ============================================================================
-
-CREATE OR REPLACE PROCEDURE spock.monitor_replication_lag_wait(
-    origin_node text,
-    receiver_node text,
-    max_lag_seconds integer DEFAULT 59,
-    check_interval_seconds integer DEFAULT 1,
-    verb boolean DEFAULT true
-)
-LANGUAGE plpgsql
-AS $$
-DECLARE
-    lag_interval interval;
-    lag_bytes bigint;
-    start_time timestamp := now();
-    elapsed_interval interval;
-BEGIN
-    IF verb THEN
-        RAISE NOTICE 'Monitoring replication lag from % to % (max lag: % seconds)',
-                     origin_node, receiver_node, max_lag_seconds;
-    END IF;
-
-    LOOP
-        -- Get current lag time and bytes
-        SELECT now() - commit_timestamp, replication_lag_bytes
-        INTO lag_interval, lag_bytes
-        FROM spock.lag_tracker
-        WHERE origin_name = origin_node AND receiver_name = receiver_node;
-
-        -- Calculate elapsed time
-        elapsed_interval := now() - start_time;
-
-        IF verb THEN
-            RAISE NOTICE '% → % lag: % (bytes: %, elapsed: %)',
-                         origin_node, receiver_node,
-                         COALESCE(lag_interval::text, 'NULL'),
-                         COALESCE(lag_bytes::text, 'NULL'),
-                         elapsed_interval::text;
-        END IF;
-
-        -- Exit when lag is within acceptable limits OR when lag_bytes is zero
-        EXIT WHEN lag_interval IS NOT NULL
-                  AND (extract(epoch FROM lag_interval) < max_lag_seconds OR lag_bytes = 0);
-
-        -- Sleep before next check
-        PERFORM pg_sleep(check_interval_seconds);
-    END LOOP;
-
-    IF verb THEN
-        IF lag_bytes = 0 THEN
-            RAISE NOTICE 'Replication lag from % to % completed (lag_bytes = 0)',
-                         origin_node, receiver_node;
-        ELSE
-            RAISE NOTICE 'Replication lag from % to % is now within acceptable limits (% seconds)',
-                         origin_node, receiver_node, max_lag_seconds;
-        END IF;
-    END IF;
-END;
-$$;
-
--- ============================================================================
--- Procedure to monitor multiple replication paths simultaneously
--- ============================================================================
-
-CREATE OR REPLACE PROCEDURE spock.monitor_multiple_replication_lags(
-    lag_configs jsonb,
-    max_lag_seconds integer DEFAULT 59,
-    check_interval_seconds integer DEFAULT 1,
-    verb boolean DEFAULT true
-)
-LANGUAGE plpgsql
-AS $$
-DECLARE
-    lag_record record;
-    lag_interval interval;
-    all_within_limits boolean;
-    start_time timestamp := now();
-    elapsed_interval interval;
-    config jsonb;
-    max_wait_seconds integer := 60;
-    wait_count integer := 0;
-    lag_data record;
-BEGIN
-    IF verb THEN
-        RAISE NOTICE 'Monitoring multiple replication lags (max lag: % seconds, timeout: % seconds)',
-                     max_lag_seconds, max_wait_seconds;
-        RAISE NOTICE 'Monitoring % paths', jsonb_array_length(lag_configs);
-    END IF;
-
-    -- Wait for initial data to appear
-    WHILE NOT EXISTS (SELECT 1 FROM spock.lag_tracker LIMIT 1) AND wait_count < 10 LOOP
-        IF verb THEN
-            RAISE NOTICE 'Waiting for lag_tracker data to appear... (attempt %/10)', wait_count + 1;
-        END IF;
-        PERFORM pg_sleep(2);
-        wait_count := wait_count + 1;
-    END LOOP;
-
-    IF NOT EXISTS (SELECT 1 FROM spock.lag_tracker LIMIT 1) THEN
-        RAISE NOTICE 'No lag_tracker data available after waiting - skipping lag monitoring';
-        RETURN;
-    END IF;
-
-    LOOP
-        all_within_limits := true;
-
-        IF verb THEN
-            RAISE NOTICE 'Checking lag for % paths...', jsonb_array_length(lag_configs);
-        END IF;
-
-        -- Check each replication path
-        FOR config IN SELECT * FROM jsonb_array_elements(lag_configs)
-        LOOP
-            IF verb THEN
-                RAISE NOTICE 'Checking path: % → %', config->>'origin', config->>'receiver';
-            END IF;
-
-            SELECT now() - commit_timestamp INTO lag_interval
-            FROM spock.lag_tracker
-            WHERE origin_name = config->>'origin'
-              AND receiver_name = config->>'receiver';
-
-            IF verb THEN
-                RAISE NOTICE '% → % lag: %',
-                             config->>'origin', config->>'receiver',
-                             COALESCE(lag_interval::text, 'NULL');
-            END IF;
-
-            -- Check if this path is within limits
-            IF lag_interval IS NULL OR extract(epoch FROM lag_interval) >= max_lag_seconds THEN
-                all_within_limits := false;
-            END IF;
-        END LOOP;
-
-        -- Also show all available lag data for debugging
-        IF verb THEN
-            RAISE NOTICE 'All available lag data:';
-            FOR lag_data IN SELECT origin_name, receiver_name, commit_timestamp, replication_lag FROM spock.lag_tracker LOOP
-                RAISE NOTICE '  % → %: commit_ts=%s, lag=%s',
-                    lag_data.origin_name, lag_data.receiver_name,
-                    lag_data.commit_timestamp, lag_data.replication_lag;
-            END LOOP;
-        END IF;
-
-        -- Calculate elapsed time
-        elapsed_interval := now() - start_time;
-
-        IF verb THEN
-            RAISE NOTICE 'All paths within limits: % (elapsed: %)',
-                         all_within_limits, elapsed_interval::text;
-        END IF;
-
-        -- Exit when all paths are within acceptable limits
-        EXIT WHEN all_within_limits;
-
-        -- Exit if we've been waiting too long
-        IF extract(epoch FROM elapsed_interval) > max_wait_seconds THEN
-            IF verb THEN
-                RAISE NOTICE 'Timeout reached (% seconds) - exiting lag monitoring', max_wait_seconds;
-            END IF;
-            EXIT;
-        END IF;
-
-        -- Sleep before next check
-        PERFORM pg_sleep(check_interval_seconds);
-    END LOOP;
-
-    IF verb THEN
-        IF all_within_limits THEN
-            RAISE NOTICE 'All replication lags are now within acceptable limits (% seconds)', max_lag_seconds;
-        ELSE
-            RAISE NOTICE 'Lag monitoring completed with timeout - some paths may still have high lag';
-        END IF;
-    END IF;
-END;
-$$;
-
--- ============================================================================
--- Example usage procedure (equivalent to the workflow logic)
--- ============================================================================
-
-CREATE OR REPLACE PROCEDURE spock.wait_for_n3_sync(
-    max_lag_seconds integer DEFAULT 59,
-    check_interval_seconds integer DEFAULT 1,
-    verb boolean DEFAULT true
-)
-LANGUAGE plpgsql
-AS $$
-DECLARE
-    lag_configs jsonb;
-BEGIN
-    -- Define the replication paths to monitor
-    lag_configs := '[
-        {"origin": "n1", "receiver": "n3"},
-        {"origin": "n2", "receiver": "n3"}
-    ]'::jsonb;
-
-    -- Monitor both paths
-    CALL spock.monitor_multiple_replication_lags(
-        lag_configs,
-        max_lag_seconds,
-        check_interval_seconds,
-        verb
-    );
-END;
-$$;
-
--- ============================================================================
-
--- ============================================================================
 -- Procedure to monitor lag using dblink
 -- ============================================================================
 
@@ -1347,7 +867,7 @@ DECLARE
     lag_interval interval;
     lag_bytes bigint;
     max_wait_seconds integer := 60;
-    start_time timestamp := now();
+    start_time timestamp := clock_timestamp();
     elapsed_interval interval;
     loop_count integer := 0;
     lag_sql text;
@@ -1368,7 +888,7 @@ BEGIN
 
         lag_interval := lag_result.lag_interval;
         lag_bytes := lag_result.lag_bytes;
-        elapsed_interval := now() - start_time;
+        elapsed_interval := clock_timestamp() - start_time;
 
         RAISE NOTICE '% → % lag: % (bytes: %, elapsed: %, loop: %)',
             src_node_name, new_node_name,
@@ -1402,8 +922,32 @@ $$;
 
 -- ============================================================================
 
+--
+-- Utility routine to correctly extract database name from the DSN string.
+--
+-- The purpose here is to centralise this specific logic: people may complain
+-- about more flexibility in writing the DSN: using upper-case letters in
+-- keywords, as an example.
+--
+CREATE OR REPLACE FUNCTION spock.extract_dbname_from_dsn(dsn text)
+RETURNS text AS $$
+DECLARE
+	dbname text;
+BEGIN
+	dbname := substring(dsn from 'dbname=([^\s]+)');
+    IF dbname IS NOT NULL THEN
+        dbname := TRIM(BOTH '''' FROM dbname);
+    END IF;
+    IF dbname IS NULL THEN
+		-- We can't rely on the PGDATABASE environment variable here.
+		-- Also, it seems unreliable to guess or use a default name.
+		-- So, complain.
+        RAISE EXCEPTION 'Exiting add_node: Database name must be explicitly included into the DSN string %', dsn;
+    END IF;
 
-
+	RETURN dbname;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
 
 -- ============================================================================
 -- Procedure to verify prerequisites for adding a new node
@@ -1429,14 +973,8 @@ BEGIN
     RAISE NOTICE 'Phase 1: Validating source and new node prerequisites';
 
     -- Check if database specified in new_node_dsn exists on new node
-    new_db_name := substring(new_node_dsn from 'dbname=([^\s]+)');
-    IF new_db_name IS NOT NULL THEN
-        new_db_name := TRIM(BOTH '''' FROM new_db_name);
-    END IF;
-    IF new_db_name IS NULL THEN
-        new_db_name := 'pgedge';
-    END IF;
 
+    SELECT spock.extract_dbname_from_dsn(new_node_dsn) INTO new_db_name;
     BEGIN
         SELECT EXISTS(SELECT 1 FROM dblink(new_node_dsn, 'SELECT 1') AS t(dummy int)) INTO new_db_exists;
         RAISE NOTICE '    OK: %', rpad('Checking database ' || new_db_name || ' exists on new node', 120, ' ');
@@ -1444,6 +982,23 @@ BEGIN
         WHEN OTHERS THEN
             RAISE NOTICE '    [FAILED] %', rpad('Database ' || new_db_name || ' does not exist on new node', 60, ' ');
             RAISE EXCEPTION 'Exiting add_node: Database % does not exist on new node. Please create it first.', new_db_name;
+    END;
+
+    -- Check if they previously installed lolor on the destination.
+    -- They should not have run CREATE EXTENSION yet
+    DECLARE
+        user_table_count integer;
+        remotesql text;
+    BEGIN
+        remotesql := 'SELECT count(*) FROM pg_tables WHERE schemaname = ''lolor''';
+        SELECT * FROM dblink(new_node_dsn, remotesql) AS t(count integer) INTO user_table_count;
+
+        IF user_table_count > 0 THEN
+            RAISE NOTICE '    [FAILED] %', rpad('Database ' || new_db_name || ' has the lolor extension installed or remaining lolor data.', 120, ' ');
+            RAISE EXCEPTION 'Exiting add_node: Database % has the lolor extension installed or remaining lolor user data.', new_db_name;
+        ELSE
+            RAISE NOTICE '    OK: %', rpad('Checking database ' || new_db_name || ' to ensure lolor is not installed', 120, ' ');
+        END IF;
     END;
 
     -- Check if database has user-created tables in user-created schemas
@@ -1494,6 +1049,40 @@ BEGIN
         ELSE
             RAISE NOTICE '    OK: %', rpad('Checking new node has all source node users', 120, ' ');
         END IF;
+    END;
+
+    -- Check: all nodes, included in the cluster, have only enabled subscriptions.
+	--
+	-- Connect to each node in the cluster and pass through the spock.subscription
+	-- table to check subscriptions statuses. Using it we try to avoid cases
+	-- when somewhere in the middle a crash or disconnection happens that may
+	-- be aggravated by add_node.
+    DECLARE
+		status_rec     record;
+		dsn_rec        record;
+		dsns_sql       text;
+		sub_status_sql text;
+    BEGIN
+        dsns_sql := 'SELECT if_dsn,node_name
+					 FROM spock.node JOIN spock.node_interface
+					 ON (if_nodeid = node_id)
+					 WHERE node_id NOT IN (SELECT node_id FROM spock.local_node)';
+		sub_status_sql := 'SELECT sub_name, sub_enabled FROM spock.subscription';
+
+        FOR dsn_rec IN SELECT * FROM dblink(src_dsn, dsns_sql)
+													AS t(dsn text, node name)
+		LOOP
+			FOR status_rec IN SELECT * FROM dblink(dsn_rec.dsn, sub_status_sql)
+													AS t(name text, status text)
+			LOOP
+			    IF status_rec.status != 't' THEN
+                    RAISE EXCEPTION '    [FAILED] %', rpad('Node ' || dsn_rec.node || ' has disabled subscription ' || status_rec.name, 60, ' ');
+                ELSIF verb THEN
+                    RAISE NOTICE '    OK: %', rpad('Node with DSN ' || dsn_rec.dsn || ' has enabled subscription ' || status_rec.name, 120, ' ');
+                END IF;
+			END LOOP;
+        END LOOP;
+		RAISE NOTICE '    OK: %', rpad('Checking each Spock node has only active subscriptions', 120, ' ');
     END;
 
     -- Validating new node prerequisites
@@ -1587,7 +1176,7 @@ BEGIN
             END IF;
 
 		    -- Extract dbname and handle both quoted and unquoted values
-            dbname := TRIM(BOTH '''' FROM substring(rec.dsn from 'dbname=([^\s]+)'));
+			SELECT spock.extract_dbname_from_dsn(rec.dsn) INTO dbname;
 
 		    -- Remove single quotes if present
             IF dbname IS NOT NULL THEN
@@ -1640,6 +1229,7 @@ DECLARE
     dbname             text;
     slot_name          text;
 	sub_name           text;
+    _commit_lsn        pg_lsn;
 BEGIN
     RAISE NOTICE 'Phase 3: Creating disabled subscriptions and slots';
 
@@ -1649,7 +1239,8 @@ BEGIN
     -- Create temporary table to store sync LSNs
     CREATE TEMP TABLE IF NOT EXISTS temp_sync_lsns (
         origin_node text PRIMARY KEY,
-        sync_lsn text NOT NULL
+        sync_lsn text NOT NULL,
+        commit_lsn pg_lsn
     );
 
     -- Check if there are any "other" nodes (not source, not new)
@@ -1702,7 +1293,7 @@ BEGIN
         -- Create replication slot on the "other" node
         BEGIN
             -- Extract dbname and handle both quoted and unquoted values
-            dbname := TRIM(BOTH '''' FROM substring(rec.dsn from 'dbname=([^\s]+)'));
+            SELECT spock.extract_dbname_from_dsn(rec.dsn) INTO dbname;
 
             -- Remove single quotes if present
             IF dbname IS NOT NULL THEN
@@ -1714,15 +1305,21 @@ BEGIN
                 dbname := TRIM(BOTH '''' FROM dbname);
             END IF;
             IF dbname IS NULL THEN dbname := 'pgedge'; END IF;
-            slot_name := left('spk_' || dbname || '_' || rec.node_name || '_sub_' || rec.node_name || '_' || new_node_name, 64);
+
+			slot_name := spock.spock_gen_slot_name(
+							dbname, rec.node_name,
+							'sub_' || rec.node_name || '_' || new_node_name);
 
             remotesql := format('SELECT slot_name, lsn FROM pg_create_logical_replication_slot(%L, ''spock_output'');', slot_name);
             IF verb THEN
                 RAISE NOTICE '    Remote SQL for slot creation: %', remotesql;
             END IF;
 
-            PERFORM * FROM dblink(rec.dsn, remotesql) AS t(slot_name text, lsn pg_lsn);
-            RAISE NOTICE '    OK: %', rpad('Creating replication slot ' || slot_name || ' on node ' || rec.node_name, 120, ' ');
+            SELECT lsn INTO _commit_lsn
+                FROM dblink(rec.dsn, remotesql) AS t(slot_name text, lsn pg_lsn);
+            UPDATE temp_sync_lsns SET commit_lsn = _commit_lsn
+                WHERE origin_node = rec.node_name;
+            RAISE NOTICE '    OK: %', rpad('Creating replication slot ' || slot_name || ' (LSN: ' || _commit_lsn || ')' || ' on node ' || rec.node_name, 120, ' ');
         EXCEPTION
             WHEN OTHERS THEN
                 RAISE NOTICE '    ✗ %', rpad('Creating replication slot ' || slot_name || ' on node ' || rec.node_name || ' (error: ' || SQLERRM || ')', 120, ' ');
@@ -2107,7 +1704,7 @@ CREATE OR REPLACE PROCEDURE spock.check_commit_timestamp_and_advance_slot(
 ) LANGUAGE plpgsql AS $$
 DECLARE
     rec RECORD;
-    commit_ts timestamp;
+    commit_lsn pg_lsn;
     slot_name text;
     dbname text;
     remotesql text;
@@ -2122,32 +1719,30 @@ BEGIN
 
     -- Multi-node scenario: check commit timestamp for "other" nodes to new node
     FOR rec IN SELECT * FROM temp_spock_nodes WHERE node_name != src_node_name AND node_name != new_node_name LOOP
-        -- Check commit timestamp for lag from "other" node to new node
         BEGIN
-            remotesql := format('SELECT commit_timestamp FROM spock.lag_tracker WHERE origin_name = %L AND receiver_name = %L',
-                               rec.node_name, new_node_name);
-            IF verb THEN
-                RAISE NOTICE '    Remote SQL for commit timestamp check: %', remotesql;
-            END IF;
+            IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'temp_sync_lsns' AND relpersistence = 't') THEN
+                -- Get the stored sync LSN from when subscription was created
+                SELECT tsl.commit_lsn INTO commit_lsn
+                FROM temp_sync_lsns tsl
+                WHERE tsl.origin_node = rec.node_name;
 
-            SELECT * FROM dblink(new_node_dsn, remotesql) AS t(ts timestamp) INTO commit_ts;
-
-            IF commit_ts IS NOT NULL THEN
-                RAISE NOTICE '    OK: %', rpad('Found commit timestamp for ' || rec.node_name || '->' || new_node_name || ': ' || commit_ts, 120, ' ');
-            ELSE
-                RAISE NOTICE '    - %', rpad('No commit timestamp found for ' || rec.node_name || '->' || new_node_name, 120, ' ');
-                CONTINUE;
+                IF commit_lsn IS NOT NULL THEN
+                    RAISE NOTICE '    OK: %', rpad('Found commit LSN for ' || rec.node_name || ' (LSN: ' || commit_lsn || ')...', 120, ' ');
+                ELSE
+                    RAISE NOTICE '    - %', rpad('No commit LSN found for ' || rec.node_name || '->' || new_node_name, 120, ' ');
+                    CONTINUE;
+                END IF;
             END IF;
         EXCEPTION
             WHEN OTHERS THEN
-                RAISE NOTICE '    ✗ %', rpad('Checking commit timestamp for ' || rec.node_name || '->' || new_node_name || ' (error: ' || SQLERRM || ')', 120, ' ');
+                RAISE NOTICE '    ✗ %', rpad('Checking commit LSN for ' || rec.node_name || '->' || new_node_name || ' (error: ' || SQLERRM || ')', 120, ' ');
                 CONTINUE;
         END;
 
         -- Advance replication slot based on commit timestamp
         BEGIN
             -- Extract dbname and handle both quoted and unquoted values
-            dbname := TRIM(BOTH '''' FROM substring(rec.dsn from 'dbname=([^\s]+)'));
+            SELECT spock.extract_dbname_from_dsn(rec.dsn) INTO dbname;
 
             -- Remove single quotes if present
             IF dbname IS NOT NULL THEN
@@ -2179,14 +1774,7 @@ BEGIN
                     CONTINUE;
                 END IF;
 
-                -- Get target LSN from commit timestamp
-                remotesql := format('SELECT spock.get_lsn_from_commit_ts(%L, %L::timestamp)', slot_name, commit_ts);
-                IF verb THEN
-                    RAISE NOTICE '    Remote SQL for LSN lookup: %', remotesql;
-                END IF;
-
-                SELECT * FROM dblink(rec.dsn, remotesql) AS t(lsn pg_lsn) INTO target_lsn;
-
+                target_lsn := commit_lsn;
                 IF target_lsn IS NULL OR target_lsn <= current_lsn THEN
                     RAISE NOTICE '    - Slot % already at or beyond target LSN (current: %, target: %)', slot_name, current_lsn, target_lsn;
                     CONTINUE;
@@ -2203,40 +1791,10 @@ BEGIN
             END;
         EXCEPTION
             WHEN OTHERS THEN
-                RAISE NOTICE '    ✗ %', rpad('Advancing slot ' || slot_name || ' to timestamp ' || commit_ts || ' (error: ' || SQLERRM || ')', 120, ' ');
+                RAISE NOTICE '    ✗ %', rpad('Advancing slot ' || slot_name || ' to LSN ' || commit_lsn || ' (error: ' || SQLERRM || ')', 120, ' ');
                 -- Continue with other nodes even if this one fails
         END;
     END LOOP;
-END;
-$$;
-
--- ============================================================================
--- Simple procedure to check lag between specific nodes (simplified)
--- ============================================================================
-
-CREATE OR REPLACE PROCEDURE spock.check_node_lag(
-    origin_node text,
-    receiver_node text,
-    verb boolean DEFAULT true,
-    INOUT lag_interval interval DEFAULT NULL
-)
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    -- Check for the specific path
-    SELECT now() - commit_timestamp INTO lag_interval
-    FROM spock.lag_tracker
-    WHERE origin_name = origin_node AND receiver_name = receiver_node;
-
-    IF lag_interval IS NOT NULL THEN
-        IF verb THEN
-            RAISE NOTICE '% → % lag: %', origin_node, receiver_node, lag_interval;
-        END IF;
-    ELSE
-        IF verb THEN
-            RAISE NOTICE '% → % lag: NULL (no data)', origin_node, receiver_node;
-        END IF;
-    END IF;
 END;
 $$;
 
@@ -2282,8 +1840,7 @@ BEGIN
         RAISE NOTICE '    OK: %', rpad('Waiting for sync event from ' || src_node_name || ' on new node ' || new_node_name || '...', 120, ' ');
     EXCEPTION
         WHEN OTHERS THEN
-            RAISE NOTICE '    ✗ %', rpad('Unable to wait for sync event from ' || src_node_name || ' on new node ' || new_node_name || ' (error: ' || SQLERRM || ')', 120, ' ');
-            RAISE;
+            RAISE EXCEPTION '    ✗ %', rpad('Unable to wait for sync event from ' || src_node_name || ' on new node ' || new_node_name || ' (error: ' || SQLERRM || ')', 120, ' ');
     END;
 END;
 $$;
@@ -2475,6 +2032,263 @@ BEGIN
     -- Phase 13: Show comprehensive subscription status across all nodes.
     -- Example: Display status of all subscriptions in n1, n2, n3, n4, n5 cluster.
     CALL spock.show_all_subscription_status(src_dsn, verb);
+END;
+$$;
+
+-- ============================================================================
+-- Procedure: health_check
+-- Purpose : Validate cluster health before or after ZODAN node addition
+--           Similar to pg_upgrade -c (check) option
+-- Arguments:
+--   src_node_name  - Source node name
+--   src_dsn        - Source node DSN
+--   new_node_name  - New node name (optional for cluster-wide check)
+--   new_node_dsn   - New node DSN (optional for cluster-wide check)
+--   check_type     - Check type: 'pre' (before add_node) or 'post' (after add_node)
+--   verb           - Verbose output flag
+-- Usage    :
+--   -- Pre-check before adding a node
+--   CALL spock.health_check('n1', 'host=localhost dbname=pgedge port=5431 user=pgedge password=pgedge',
+--                           'n3', 'host=localhost dbname=pgedge port=5433 user=pgedge password=pgedge',
+--                           'pre', true);
+--
+--   -- Post-check after adding a node
+--   CALL spock.health_check('n1', 'host=localhost dbname=pgedge port=5431 user=pgedge password=pgedge',
+--                           'n3', 'host=localhost dbname=pgedge port=5433 user=pgedge password=pgedge',
+--                           'post', true);
+--
+--   -- Cluster-wide check (no new node)
+--   CALL spock.health_check('n1', 'host=localhost dbname=pgedge port=5431 user=pgedge password=pgedge',
+--                           NULL, NULL, 'pre', true);
+-- ============================================================================
+CREATE OR REPLACE PROCEDURE spock.health_check(
+    src_node_name text,
+    src_dsn text,
+    new_node_name text DEFAULT NULL,
+    new_node_dsn text DEFAULT NULL,
+    check_type text DEFAULT 'pre',
+    verb boolean DEFAULT false
+) LANGUAGE plpgsql AS $$
+DECLARE
+    checks_passed integer := 0;
+    checks_failed integer := 0;
+    check_result text;
+    node_rec RECORD;
+    remotesql text;
+    result_value text;
+    result_count integer;
+    src_version text;
+    new_version text;
+    sub_count text;
+    user_table_count text;
+BEGIN
+    RAISE NOTICE '';
+    RAISE NOTICE '================================================================================';
+    RAISE NOTICE 'ZODAN CLUSTER HEALTH CHECK (%-CHECK)', upper(check_type);
+    RAISE NOTICE '================================================================================';
+
+    -- ========================================================================
+    -- Check 1: Spock version compatibility (if new node provided)
+    -- ========================================================================
+    IF new_node_dsn IS NOT NULL THEN
+        BEGIN
+            -- Call existing check_spock_version_compatibility procedure
+            CALL spock.check_spock_version_compatibility(src_dsn, new_node_dsn, false);
+            RAISE NOTICE 'PASS: Spock version compatibility check';
+            checks_passed := checks_passed + 1;
+        EXCEPTION WHEN OTHERS THEN
+            RAISE NOTICE 'FAIL: Spock version compatibility - %', SQLERRM;
+            checks_failed := checks_failed + 1;
+        END;
+    END IF;
+
+    -- ========================================================================
+    -- Check 2: Node connectivity - Source node
+    -- ========================================================================
+    BEGIN
+        remotesql := 'SELECT 1';
+        SELECT * FROM dblink(src_dsn, remotesql) AS t(result integer) INTO result_value;
+        RAISE NOTICE 'PASS: Source node % connectivity', src_node_name;
+        checks_passed := checks_passed + 1;
+    EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE 'FAIL: Source node % connectivity - %', src_node_name, SQLERRM;
+        checks_failed := checks_failed + 1;
+    END;
+
+    -- ========================================================================
+    -- Check 3: Node connectivity - New node (if provided)
+    -- ========================================================================
+    IF new_node_dsn IS NOT NULL THEN
+        BEGIN
+            remotesql := 'SELECT 1';
+            SELECT * FROM dblink(new_node_dsn, remotesql) AS t(result integer) INTO result_value;
+            RAISE NOTICE 'PASS: New node % connectivity', new_node_name;
+            checks_passed := checks_passed + 1;
+        EXCEPTION WHEN OTHERS THEN
+            RAISE NOTICE 'FAIL: New node % connectivity - %', new_node_name, SQLERRM;
+            checks_failed := checks_failed + 1;
+        END;
+    END IF;
+
+    -- ========================================================================
+    -- Check 4: Spock extension installation - Source node
+    -- ========================================================================
+    BEGIN
+        remotesql := 'SELECT extversion FROM pg_extension WHERE extname = ''spock''';
+        SELECT * FROM dblink(src_dsn, remotesql) AS t(version text) INTO src_version;
+        IF src_version IS NOT NULL THEN
+            RAISE NOTICE 'PASS: Spock extension on source node (version %)', src_version;
+            checks_passed := checks_passed + 1;
+        ELSE
+            RAISE NOTICE 'FAIL: Spock extension not installed on source node';
+            checks_failed := checks_failed + 1;
+        END IF;
+    EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE 'FAIL: Spock extension check on source - %', SQLERRM;
+        checks_failed := checks_failed + 1;
+    END;
+
+    -- ========================================================================
+    -- Check 5: Spock extension installation - New node (if provided)
+    -- ========================================================================
+    IF new_node_dsn IS NOT NULL THEN
+        BEGIN
+            remotesql := 'SELECT extversion FROM pg_extension WHERE extname = ''spock''';
+            SELECT * FROM dblink(new_node_dsn, remotesql) AS t(version text) INTO new_version;
+            IF new_version IS NOT NULL THEN
+                RAISE NOTICE 'PASS: Spock extension on new node (version %)', new_version;
+                checks_passed := checks_passed + 1;
+            ELSE
+                RAISE NOTICE 'FAIL: Spock extension not installed on new node';
+                checks_failed := checks_failed + 1;
+            END IF;
+        EXCEPTION WHEN OTHERS THEN
+            RAISE NOTICE 'FAIL: Spock extension check on new node - %', SQLERRM;
+            checks_failed := checks_failed + 1;
+        END;
+    END IF;
+
+    -- ========================================================================
+    -- Check 6: Cluster node enumeration
+    -- ========================================================================
+    BEGIN
+        remotesql := 'SELECT count(*) FROM spock.node';
+        SELECT * FROM dblink(src_dsn, remotesql) AS t(node_count integer) INTO result_count;
+        RAISE NOTICE 'PASS: Cluster has % nodes', result_count;
+        checks_passed := checks_passed + 1;
+    EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE 'FAIL: Cluster node enumeration - %', SQLERRM;
+        checks_failed := checks_failed + 1;
+    END;
+
+    -- ========================================================================
+    -- Check 7: Active subscriptions on each node
+    -- ========================================================================
+    BEGIN
+        FOR node_rec IN
+            SELECT node_name, if_dsn
+            FROM dblink(src_dsn,
+                'SELECT n.node_name, i.if_dsn FROM spock.node n JOIN spock.node_interface i ON n.node_id = i.if_nodeid'
+            ) AS t(node_name text, if_dsn text)
+        LOOP
+            BEGIN
+                remotesql := 'SELECT count(*) FROM spock.subscription WHERE sub_enabled = true';
+                SELECT * FROM dblink(node_rec.if_dsn, remotesql) AS t(sub_count text) INTO sub_count;
+                RAISE NOTICE 'PASS: Node % has % active subscriptions', node_rec.node_name, COALESCE(sub_count, '0');
+                checks_passed := checks_passed + 1;
+            EXCEPTION WHEN OTHERS THEN
+                RAISE NOTICE 'FAIL: Node % subscription check - %', node_rec.node_name, SQLERRM;
+                checks_failed := checks_failed + 1;
+            END;
+        END LOOP;
+    EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE 'FAIL: Cluster subscription check - %', SQLERRM;
+        checks_failed := checks_failed + 1;
+    END;
+
+    -- ========================================================================
+    -- Check 8: Database prerequisites (pre-check only)
+    -- ========================================================================
+    IF check_type = 'pre' AND new_node_dsn IS NOT NULL THEN
+        -- Check 8a: Verify lolor extension is not installed
+        BEGIN
+            remotesql := 'SELECT count(*) FROM pg_tables WHERE schemaname = ''lolor''';
+            SELECT * FROM dblink(new_node_dsn, remotesql) AS t(table_count text) INTO user_table_count;
+
+            IF user_table_count IS NOT NULL AND user_table_count::integer = 0 THEN
+                RAISE NOTICE 'PASS: Destination database does not have signs of lolor being installed';
+                checks_passed := checks_passed + 1;
+            ELSE
+                RAISE NOTICE 'FAIL: Destination database has the lolor extension installed or remaining lolor user data in the lolor schema';
+                checks_failed := checks_failed + 1;
+            END IF;
+        EXCEPTION WHEN OTHERS THEN
+            RAISE NOTICE 'FAIL: lolor extension check - %', SQLERRM;
+            checks_failed := checks_failed + 1;
+        END;
+
+        -- Check 8b: Verify database is empty (no user tables)
+        BEGIN
+            remotesql := $pg_tables$
+                SELECT count(*) FROM pg_tables
+                WHERE schemaname NOT IN ('information_schema', 'pg_catalog', 'pg_toast', 'spock')
+                AND schemaname NOT LIKE 'pg_temp_%'
+                AND schemaname NOT LIKE 'pg_toast_temp_%'
+            $pg_tables$;
+            SELECT * FROM dblink(new_node_dsn, remotesql) AS t(table_count text) INTO user_table_count;
+
+            IF user_table_count IS NOT NULL AND user_table_count::integer = 0 THEN
+                RAISE NOTICE 'PASS: New node database is empty (fresh database)';
+                checks_passed := checks_passed + 1;
+            ELSE
+                RAISE NOTICE 'FAIL: New node database has % user-created tables', user_table_count;
+                checks_failed := checks_failed + 1;
+            END IF;
+        EXCEPTION WHEN OTHERS THEN
+            RAISE NOTICE 'FAIL: Database emptiness check - %', SQLERRM;
+            checks_failed := checks_failed + 1;
+        END;
+    END IF;
+
+    -- ========================================================================
+    -- Check 9: Replication status (post-check only)
+    -- ========================================================================
+    IF check_type = 'post' AND new_node_name IS NOT NULL AND new_node_dsn IS NOT NULL THEN
+        BEGIN
+            remotesql := 'SELECT count(*) FROM spock.subscription WHERE sub_enabled = true';
+            SELECT * FROM dblink(new_node_dsn, remotesql) AS t(sub_count text) INTO sub_count;
+
+            IF sub_count IS NOT NULL AND sub_count::integer > 0 THEN
+                RAISE NOTICE 'PASS: New node % has active subscriptions', new_node_name;
+                checks_passed := checks_passed + 1;
+            ELSE
+                RAISE NOTICE 'FAIL: New node % has no active subscriptions', new_node_name;
+                checks_failed := checks_failed + 1;
+            END IF;
+        EXCEPTION WHEN OTHERS THEN
+            RAISE NOTICE 'FAIL: Post-addition replication check - %', SQLERRM;
+            checks_failed := checks_failed + 1;
+        END;
+    END IF;
+
+    -- ========================================================================
+    -- Summary
+    -- ========================================================================
+    RAISE NOTICE '';
+    RAISE NOTICE '================================================================================';
+    RAISE NOTICE 'HEALTH CHECK SUMMARY';
+    RAISE NOTICE '================================================================================';
+    RAISE NOTICE 'Checks Passed: %', checks_passed;
+    RAISE NOTICE 'Checks Failed: %', checks_failed;
+    RAISE NOTICE 'Total Checks:  %', checks_passed + checks_failed;
+    RAISE NOTICE '';
+
+    IF checks_failed > 0 THEN
+        RAISE NOTICE 'RESULT: FAILED - Please resolve issues before proceeding';
+        RAISE EXCEPTION 'Health check failed with % failed checks', checks_failed;
+    ELSE
+        RAISE NOTICE 'RESULT: PASSED - Cluster is ready for ZODAN node addition';
+    END IF;
 END;
 $$;
 
