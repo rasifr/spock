@@ -972,6 +972,59 @@ Datum spock_alter_subscription_synchronize(PG_FUNCTION_ARGS)
 }
 
 /*
+ * Check if the origin is in read-only mode (spock.readonly != 'off').
+ * If so, raise an error to prevent data loss during resync with truncate.
+ */
+static void
+check_origin_readonly_for_resync(SpockSubscription *sub, const char *nspname,
+								 const char *relname)
+{
+	PGconn	   *conn;
+	PGresult   *res;
+	char	   *readonly_value;
+	char		tablename[NAMEDATALEN * 2 + 2];
+
+	conn = spock_connect(sub->origin_if->dsn, sub->name, "readonly_check");
+
+	res = PQexec(conn, "SHOW spock.readonly");
+	if (PQresultStatus(res) != PGRES_TUPLES_OK)
+	{
+		PQclear(res);
+		PQfinish(conn);
+		ereport(ERROR,
+				(errmsg("could not check spock.readonly on origin"),
+				 errdetail("Query failed: %s", PQerrorMessage(conn))));
+	}
+
+	if (PQntuples(res) != 1)
+	{
+		PQclear(res);
+		PQfinish(conn);
+		ereport(ERROR,
+				(errmsg("unexpected result from SHOW spock.readonly")));
+	}
+
+	readonly_value = PQgetvalue(res, 0, 0);
+
+	if (readonly_value && strcmp(readonly_value, "off") != 0)
+	{
+		snprintf(tablename, sizeof(tablename), "%s.%s", nspname, relname);
+		PQclear(res);
+		PQfinish(conn);
+		ereport(ERROR,
+				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+				 errmsg("cannot resync table \"%s\" with truncate: origin is in read-only mode",
+						tablename),
+				 errdetail("spock.readonly is set to \"%s\" on the origin.",
+						   readonly_value),
+				 errhint("Set spock.readonly to 'off' on the origin before resyncing with truncate.")));
+	}
+
+	PQclear(res);
+	PQfinish(conn);
+}
+
+/*
  * Resynchronize one existing table.
  */
 Datum
@@ -1028,7 +1081,15 @@ spock_alter_subscription_resynchronize_table(PG_FUNCTION_ARGS)
 	table_close(rel, NoLock);
 
 	if (truncate)
+	{
+		/*
+		 * Check that the origin is not in read-only mode before truncating.
+		 * If spock.readonly is set on the origin, the subsequent COPY will
+		 * fail, but truncating first would cause permanent data loss.
+		 */
+		check_origin_readonly_for_resync(sub, nspname, relname);
 		truncate_table(nspname, relname);
+	}
 
 	/* Tell apply to re-read sync statuses. */
 	spock_subscription_changed(sub->id, false);
