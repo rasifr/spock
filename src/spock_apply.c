@@ -78,7 +78,6 @@
 #include "spock_sync.h"
 #include "spock_worker.h"
 #include "spock_apply.h"
-#include "spock_group.h"
 #include "spock_apply_heap.h"
 #include "spock_exception_handler.h"
 #include "spock_common.h"
@@ -3853,53 +3852,6 @@ spock_apply_main(Datum main_arg)
 	replorigin_session_setup(originid);
 	replorigin_session_origin = originid;
 	origin_startpos = replorigin_session_get_progress(false);
-
-	/*
-	 * P_snap bootstrap: if this subscription has never replicated
-	 * (origin at 0/0), a prior full sync of another subscription may have
-	 * deposited a P_snap value in the group progress hash via
-	 * adjust_progress_info() + spock_group_progress_update_list().
-	 *
-	 * P_snap is the remote node's commit LSN up to which the COPY snapshot
-	 * already contains data.  Advancing our replication origin to P_snap
-	 * tells the provider to start the WAL stream from that point, so
-	 * transactions already present in the COPY snapshot are never sent to
-	 * us and duplicate-apply exceptions are avoided without needing
-	 * transdiscard.
-	 *
-	 * We only do this when origin_startpos is 0/0 (never replicated).  If
-	 * the worker has replicated before it is already past P_snap, and we
-	 * must not go backwards.
-	 */
-	if (XLogRecPtrIsInvalid(origin_startpos) && SpockGroupHash != NULL)
-	{
-		SpockGroupKey	key;
-		SpockGroupEntry *entry;
-		bool			found;
-		XLogRecPtr		p_snap = InvalidXLogRecPtr;
-
-		key.dbid           = MyDatabaseId;
-		key.node_id        = MySubscription->target->id;
-		key.remote_node_id = MySubscription->origin->id;
-
-		LWLockAcquire(SpockCtx->apply_group_master_lock, LW_SHARED);
-		entry = (SpockGroupEntry *) hash_search(SpockGroupHash, &key,
-												HASH_FIND, &found);
-		if (found)
-			p_snap = entry->progress.remote_commit_lsn;
-		LWLockRelease(SpockCtx->apply_group_master_lock);
-
-		if (!XLogRecPtrIsInvalid(p_snap))
-		{
-			replorigin_advance(originid, p_snap, InvalidXLogRecPtr,
-							   false /* go_backward */, true /* wal_log */);
-			origin_startpos = p_snap;
-			elog(LOG, "SPOCK %s: bootstrapped origin %s to P_snap %X/%X "
-				 "(COPY snapshot already contains transactions up to this LSN)",
-				 MySubscription->name, MySubscription->slot_name,
-				 LSN_FORMAT_ARGS(p_snap));
-		}
-	}
 
 	/* Start the replication. */
 	streamConn = spock_connect_replica(MySubscription->origin_if->dsn,

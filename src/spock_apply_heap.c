@@ -1064,13 +1064,59 @@ spock_apply_heap_update(SpockRelation *rel, SpockTupleData *oldtup,
 	}
 	else
 	{
-		/* SPOCK_CT_UPDATE_MISSING case gets logged in exception_log, not resolutions */
 		SpockExceptionLog *exception_log = &exception_log_ptr[my_exception_log_index];
 
 		/*
-		 * The tuple to be updated could not be found.  Do nothing except for
-		 * emitting a log message. TODO: Add pkey information as well.
+		 * The tuple to be updated could not be found by the old key.
+		 *
+		 * For primary-key-changing UPDATEs (e.g. "SET aid = -aid"), the new
+		 * key may already exist locally because a COPY sync from a peer node
+		 * captured the post-update state in its snapshot while the WAL stream
+		 * is replaying the same change as a duplicate.  Re-search using the
+		 * new tuple's key: if it is already present, treat the update as
+		 * already-applied and skip it rather than raising an error that would
+		 * disable the subscription.
 		 */
+		if (newtup != NULL)
+		{
+			TupleTableSlot *newkeyslot;
+			bool		new_found;
+
+			newkeyslot = ExecInitExtraTupleSlot(estate,
+												RelationGetDescr(rel->rel),
+												&TTSOpsVirtual);
+			slot_store_data(newkeyslot, rel, newtup);
+			new_found = FindReplTupleInLocalRel(edata,
+												relinfo->ri_RelationDesc,
+												edata->targetRel->idxoid,
+												newkeyslot, &localslot,
+												false);
+			if (new_found)
+			{
+				HeapTuple	remotetuple;
+
+				/*
+				 * The row already exists under the new key.  The update has
+				 * been applied via another path (e.g. the COPY snapshot).
+				 * Log as update_missing/skip and return without error.
+				 */
+				remotetuple = heap_form_tuple(RelationGetDescr(rel->rel),
+											  newtup->values, newtup->nulls);
+				spock_report_conflict(SPOCK_CT_UPDATE_MISSING,
+									  rel, NULL, oldtup,
+									  remotetuple, NULL,
+									  SpockResolution_Skip,
+									  InvalidTransactionId, false,
+									  InvalidRepOriginId,
+									  (TimestampTz) 0,
+									  edata->targetRel->idxoid);
+				ExecCloseIndices(edata->targetRelInfo);
+				EvalPlanQualEnd(&epqstate);
+				finish_edata(edata);
+				return;
+			}
+		}
+
 		exception_log->local_tuple = NULL;
 		elog(ERROR,
 			 "logical replication did not find row to be updated "
