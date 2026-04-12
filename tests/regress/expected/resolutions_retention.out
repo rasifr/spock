@@ -84,9 +84,15 @@ SELECT COUNT(*) AS total FROM spock.resolutions WHERE relname = 'public.retentio
 -- (60 > 30) so cleanup will delete it.
 ALTER SYSTEM SET spock.resolutions_retention_days = 30;
 SELECT pg_reload_conf();
- pg_reload_conf
+ pg_reload_conf 
 ----------------
  t
+(1 row)
+
+SELECT pg_sleep(1);
+ pg_sleep 
+----------
+ 
 (1 row)
 
 SELECT spock.cleanup_resolutions() AS rows_deleted;
@@ -127,9 +133,15 @@ SET log_time = now() - '999 days'::interval
 WHERE relname = 'public.retention_test';
 ALTER SYSTEM SET spock.resolutions_retention_days = 0;
 SELECT pg_reload_conf();
- pg_reload_conf
+ pg_reload_conf 
 ----------------
  t
+(1 row)
+
+SELECT pg_sleep(1);
+ pg_sleep 
+----------
+ 
 (1 row)
 
 SELECT spock.cleanup_resolutions() AS rows_deleted;
@@ -152,9 +164,15 @@ SET log_time = now() - '999 days'::interval
 WHERE relname = 'public.retention_test';
 ALTER SYSTEM SET spock.resolutions_retention_days = 30;
 SELECT pg_reload_conf();
- pg_reload_conf
+ pg_reload_conf 
 ----------------
  t
+(1 row)
+
+SELECT pg_sleep(1);
+ pg_sleep 
+----------
+ 
 (1 row)
 
 ALTER SYSTEM SET spock.save_resolutions = off;
@@ -209,7 +227,7 @@ SELECT pg_reload_conf();
 \c :subscriber_dsn
 ALTER SYSTEM RESET spock.resolutions_retention_days;
 SELECT pg_reload_conf();
- pg_reload_conf
+ pg_reload_conf 
 ----------------
  t
 (1 row)
