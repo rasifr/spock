@@ -10,7 +10,7 @@ use SpockTest qw(
 );
 
 # =============================================================================
-# Test 019: Stale socket fd after provider connection failure — epoll_ctl EINVAL
+# Test 019: Stale socket fd after provider connection failure
 # =============================================================================
 #
 # Bug (present in both v5_STABLE and main):
@@ -24,36 +24,46 @@ use SpockTest qw(
 #       ...
 #       WaitLatchOrSocket(..., fd, ...)  // fd is never refreshed on re-entry
 #
-#   When the provider connection dies, libpq closes the socket internally
-#   (pqDropConnection sets conn->sock = -1).  The apply worker catches
-#   "connection to other side has died", aborts the current transaction,
-#   and jumps back to stream_replay: to replay from the queue.  But fd
-#   still holds the old, now-closed socket number.  The very first call to
-#   WaitLatchOrSocket() on re-entry passes that stale fd to epoll_ctl
-#   (Linux) or kevent (macOS).  The OS rejects it:
+#   When the provider connection dies, the COPY stream ends ("data stream
+#   ended").  The apply worker catches it, aborts the current transaction,
+#   and jumps back to stream_replay: to replay from the queue.  On re-entry
+#   the TCP FIN from the server is already in the kernel receive buffer.
+#   WaitLatchOrSocket immediately sees the EOF as WL_SOCKET_READABLE, then
+#   PQconsumeInput detects the dead connection and sets status to
+#   CONNECTION_BAD.  The PQstatus check fires a SECOND exception:
 #
-#       ERROR:  epoll_ctl() failed: Invalid argument     (Linux)
-#       ERROR:  kevent failed: Bad file descriptor       (macOS)
+#       ERROR: "connection to other side has died"
 #
-#   That error is caught with use_try_block=true and re-thrown, causing
-#   the apply worker to exit immediately with a spurious OS error instead
-#   of reconnecting cleanly.
+#   with use_try_block=true.  Under TRANSDISCARD (the production default)
+#   this hits the "error during exception handling" path:
+#
+#       LOG:  SPOCK sub_n1_n2: error during exception handling: ...
+#       LOG:  SPOCK sub_n1_n2: exiting to allow worker restart
+#       [PG_RE_THROW — worker crashes and is restarted by bgworker manager]
+#
+#   On Linux, if the fd was closed and reused, WaitLatchOrSocket may instead
+#   throw epoll_ctl(EINVAL) or kevent(EBADF) before even reading the socket,
+#   but the outcome is the same: a spurious "error during exception handling"
+#   and a needless worker restart.
 #
 # Fix:
-#   Add  fd = PQsocket(applyconn);  right after the stream_replay: label.
-#   When the connection is dead, PQsocket() returns PGINVALID_SOCKET (-1),
-#   which WaitLatchOrSocket() treats as "no socket — wait on latch only",
-#   so the worker can drain the replay queue and exit cleanly without
-#   touching epoll/kqueue.
+#   At stream_replay:, call PQconsumeInput to flush any buffered EOF from the
+#   provider.  Then refresh fd = PQsocket(applyconn).  If the connection is
+#   dead (CONNECTION_BAD or fd == PGINVALID_SOCKET), log and return cleanly.
+#   The bgworker manager restarts the worker with a fresh connection without
+#   logging a spurious error.
 #
 # Test plan:
-#   1. 2-node cluster: n1 (provider) → n2 (subscriber), subscription sub_n1_n2.
-#   2. Verify baseline replication works.
-#   3. Kill the walsender on n1 (terminate via pg_stat_replication), which
-#      drops the apply worker's connection on n2 without stopping n1.
-#   4. Check n2 log — must NOT contain a wait-event error
-#      (epoll_ctl EINVAL on Linux / kevent EBADF on macOS).
-#   5. Verify the apply worker reconnects and replication resumes.
+#   1. 2-node cluster: n1 (provider) -> n2 (subscriber), subscription sub_n1_n2.
+#   2. Override spock.exception_behaviour = transdiscard on n2 so the test
+#      matches production behaviour (default is sub_disable in SpockTest.pm).
+#   3. Verify baseline replication works.
+#   4. Kill the walsender on n1 (terminate via pg_stat_replication).
+#   5. PRIMARY CHECK: n2 log must NOT contain "error during exception handling"
+#      — the cross-platform indicator that stream_replay: re-entered with a
+#      dead connection.  On Linux this may also appear as epoll_ctl(EINVAL) or
+#      kevent(EBADF); both are caught by the same secondary diag check.
+#   6. Verify the apply worker reconnects and replication resumes.
 # =============================================================================
 
 create_cluster(2, 'Create 2-node cluster for stale-fd epoll_ctl regression test');
@@ -77,7 +87,23 @@ my $conn_n1 = "host=$host dbname=$dbname port=$p1 user=$db_user password=$db_pas
 my $pg_log_n2 = "$log_dir/00${p2}.log";
 
 # ---------------------------------------------------------------------------
-# Setup: table on both nodes, one-way subscription n1 → n2.
+# Override exception_behaviour to TRANSDISCARD on n2.
+#
+# SpockTest.pm sets spock.exception_behaviour=sub_disable in postgresql.conf.
+# We override to transdiscard so the test matches the production default and
+# observes the production symptom: "error during exception handling" + worker
+# restart (not permanent subscription disable).
+#
+# ALTER SYSTEM writes to postgresql.auto.conf which takes precedence over
+# postgresql.conf.  pg_reload_conf() sends SIGHUP to all backends; the apply
+# worker picks up the new setting on its next ConfigReloadPending iteration.
+# ---------------------------------------------------------------------------
+psql_or_bail(2, "ALTER SYSTEM SET spock.exception_behaviour = 'transdiscard'");
+psql_or_bail(2, "SELECT pg_reload_conf()");
+sleep(1);
+
+# ---------------------------------------------------------------------------
+# Setup: table on both nodes, one-way subscription n1 -> n2.
 # ---------------------------------------------------------------------------
 
 psql_or_bail(1, "CREATE TABLE test_stale_fd (id SERIAL PRIMARY KEY, val TEXT)");
@@ -95,7 +121,7 @@ psql_or_bail(1, "INSERT INTO test_stale_fd (val) VALUES ('before_kill')");
 sleep(3);
 
 my $before_count = scalar_query(2, "SELECT count(*) FROM test_stale_fd");
-is($before_count, '1', 'baseline row replicates n1→n2');
+is($before_count, '1', 'baseline row replicates n1->n2');
 
 # ---------------------------------------------------------------------------
 # Capture n2 log offset immediately before we trigger the connection failure.
@@ -106,10 +132,10 @@ $log_offset = 0 unless defined $log_offset;
 # ---------------------------------------------------------------------------
 # Trigger: kill the walsender on n1 serving n2's subscription.
 #
-# Using pg_terminate_backend on pg_stat_replication kills the walsender
-# cleanly at the OS level — n1 keeps running, only the replication
-# connection is dropped.  The apply worker on n2 sees an EOF and throws
-# "connection to other side has died".
+# pg_terminate_backend on pg_stat_replication kills the walsender cleanly
+# at the OS level.  n1 keeps running; only the replication connection is
+# dropped.  The apply worker on n2 gets an EOF on the COPY stream and throws
+# "data stream ended".
 # ---------------------------------------------------------------------------
 
 my $killed = scalar_query(1,
@@ -123,9 +149,10 @@ if (!defined $killed || $killed == 0) {
     diag("WARNING: no streaming walsender found — apply worker may not have been active yet");
 }
 
-# Give n2 time to detect the dead socket, enter the exception path,
-# and attempt the stream_replay: retry.  The stale-fd error (if present)
-# appears within milliseconds of the initial exception, so 5 s is ample.
+# Give n2 time to detect the dead socket and enter the exception path.
+# The first exception fires immediately; the second (stale-fd re-entry) fires
+# within milliseconds on macOS (EOF already in TCP buffer) or as an
+# epoll_ctl/kevent error on Linux.  5 s is ample for both paths.
 sleep(5);
 
 # ---------------------------------------------------------------------------
@@ -139,44 +166,71 @@ if (open(my $lf, '<', $pg_log_n2)) {
     close($lf);
 }
 
-# The initial exception must appear — that is always expected regardless of
-# the bug being present or not.
-my $conn_died = ($new_log =~ /connection to other side has died/) ? 1 : 0;
-ok($conn_died, 'n2 log shows "connection to other side has died" after walsender kill');
+# The initial exception must appear in the log — sanity check that the kill
+# worked.  After the walsender dies the COPY stream ends, so the apply worker
+# logs either "data stream ended" (EOF from clean walsender shutdown) or
+# "connection to other side has died" (if libpq detects the TCP drop first).
+my $initial_exception =
+    ($new_log =~ /data stream ended|connection to other side has died/) ? 1 : 0;
+ok($initial_exception, 'n2 log shows initial connection failure after walsender kill');
 
-if (!$conn_died && defined $killed && $killed == 0) {
-    diag("No walsender was killed and no connection-death message found.");
-    diag("This may indicate the apply worker was not yet streaming when we checked.");
-}
-
-# The bug: after catching the initial exception, the apply worker jumps back
-# to stream_replay: with a stale (closed) fd and immediately hits a
-# wait-event error on the OS epoll/kqueue level:
-#
-#   Linux: epoll_ctl() failed: Invalid argument
-#   macOS: kevent failed: Bad file descriptor
-#
-# After the fix, neither message should appear.
-my $wait_event_error =
-    ($new_log =~ /epoll_ctl\(\) failed|kevent failed: Bad file descriptor/) ? 1 : 0;
-
-ok(!$wait_event_error,
-    'no wait-event error (epoll_ctl EINVAL / kevent EBADF) after connection failure');
-
-if ($wait_event_error) {
-    diag("BUG CONFIRMED: stale fd caused a wait-event error in the stream_replay: path");
-    diag("Root cause: fd is not refreshed after jumping to stream_replay:");
-    diag("  fd = PQsocket(applyconn) is set once before stream_replay:");
-    diag("  After connection death PQsocket() returns -1 but fd still holds the old value.");
-    diag("Fix: add  fd = PQsocket(applyconn);  right after the stream_replay: label.");
-} else {
-    diag("Clean reconnect — no spurious wait-event error in stream_replay: path");
+if (!$initial_exception) {
+    diag("No initial exception found — walsender kill may not have been detected yet.");
 }
 
 # ---------------------------------------------------------------------------
-# Recovery: the apply worker must restart and replication must resume.
-# Whether or not the bug is present, the bgworker infrastructure restarts
-# the apply worker automatically; this verifies the reconnect succeeds.
+# PRIMARY CROSS-PLATFORM BUG CHECK
+#
+# When the stale-fd bug is present, apply_work() re-enters stream_replay:
+# with the dead connection.  The re-entry causes a second exception:
+#
+#   macOS: WaitLatchOrSocket sees the EOF immediately (WL_SOCKET_READABLE),
+#          PQconsumeInput flips the status to CONNECTION_BAD, then
+#          PQstatus==CONNECTION_BAD fires "connection to other side has died".
+#
+#   Linux: epoll_ctl(EINVAL) or kevent(EBADF) from the stale fd may fire
+#          before the socket is even read, producing "epoll_ctl() failed" /
+#          "kevent failed".
+#
+# Both cases are caught by PG_CATCH with use_try_block=true.  Under
+# TRANSDISCARD (the production default, set above) this hits the
+# "error during exception handling" path:
+#
+#   LOG: SPOCK sub_n1_n2: error during exception handling: <message>
+#   LOG: SPOCK sub_n1_n2: exiting to allow worker restart
+#   [PG_RE_THROW -> worker exits, bgworker manager restarts it]
+#
+# After the fix the worker exits cleanly at stream_replay: before reaching
+# WaitLatchOrSocket, so no second exception and no "error during exception
+# handling" log entry.
+# ---------------------------------------------------------------------------
+
+my $eeh = ($new_log =~ /error during exception handling/) ? 1 : 0;
+my $wait_event_error =
+    ($new_log =~ /epoll_ctl\(\) failed|kevent failed: Bad file descriptor/) ? 1 : 0;
+
+ok(!$eeh,
+    'no "error during exception handling" after connection failure (stale-fd bug)');
+
+if ($eeh) {
+    diag("BUG CONFIRMED: stream_replay: re-entered with dead connection");
+    diag("  macOS: WL_SOCKET_READABLE from buffered EOF => PQstatus==BAD => 2nd exception");
+    diag("  Linux: epoll_ctl(EINVAL)/kevent(EBADF) from stale fd => 2nd exception");
+    diag("  Both:  use_try_block=true => 'error during exception handling' => PG_RE_THROW");
+    diag("Fix: at stream_replay:, call PQconsumeInput and check PQstatus/fd before");
+    diag("     entering WaitLatchOrSocket; exit cleanly if connection is dead.");
+}
+
+# Supplemental: Linux-specific epoll/kevent error message.
+if ($wait_event_error) {
+    diag("Linux wait-event OS error detected (epoll_ctl EINVAL / kevent EBADF).");
+    diag("This is the Linux path for the same stale-fd bug.");
+}
+
+# ---------------------------------------------------------------------------
+# Recovery: with TRANSDISCARD the subscription stays enabled; the bgworker
+# manager restarts the apply worker automatically.  Verify the worker
+# reconnects and replication resumes.
 # ---------------------------------------------------------------------------
 
 ok(wait_for_sub_status(2, 'sub_n1_n2', 'replicating', 30),
@@ -186,7 +240,7 @@ psql_or_bail(1, "INSERT INTO test_stale_fd (val) VALUES ('after_reconnect')");
 sleep(5);
 
 my $after_count = scalar_query(2, "SELECT count(*) FROM test_stale_fd");
-cmp_ok($after_count, '>=', '2', 'post-reconnect row replicates n1→n2');
+cmp_ok($after_count, '>=', '2', 'post-reconnect row replicates n1->n2');
 
 # ---------------------------------------------------------------------------
 # Cleanup
