@@ -2896,6 +2896,22 @@ stream_replay:
 
 	need_replay = false;
 
+	/*
+	 * Refresh fd before (re-)entering the wait loop.  On re-entry with
+	 * use_try_block=true the previous exception may have been a connection
+	 * failure: libpq's pqDropConnection closes conn->sock and sets status to
+	 * CONNECTION_BAD before the ERROR is thrown.  The old fd value is now
+	 * stale (closed, possibly reused by the OS).  Passing it to
+	 * WaitLatchOrSocket causes epoll_ctl(EINVAL) on Linux; on macOS kqueue
+	 * silently ignores the bad fd but PQconsumeInput then fires a second
+	 * "connection to other side has died" exception — both caught as
+	 * "error during exception handling".  Return instead so the worker
+	 * restarts and reconnects cleanly.
+	 */
+	fd = PQsocket(applyconn);
+	if (PQstatus(applyconn) == CONNECTION_BAD || fd == PGINVALID_SOCKET)
+		return;
+
 	PG_TRY();
 	{
 		while (!got_SIGTERM)
