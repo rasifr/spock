@@ -130,30 +130,52 @@ my $log_offset = -s $pg_log_n2;
 $log_offset = 0 unless defined $log_offset;
 
 # ---------------------------------------------------------------------------
-# Trigger: kill the walsender on n1 serving n2's subscription.
+# Trigger: kill the walsender on n1 with SIGKILL.
 #
-# pg_terminate_backend on pg_stat_replication kills the walsender cleanly
-# at the OS level.  n1 keeps running; only the replication connection is
-# dropped.  The apply worker on n2 gets an EOF on the COPY stream and throws
-# "data stream ended".
+# We use SIGKILL (not pg_terminate_backend/SIGTERM) deliberately.
+#
+# With SIGTERM, the walsender gets a chance to send a CopyDone message before
+# dying.  The apply worker's first exception is then "data stream ended" and
+# pqDropConnection has NOT yet been called — the socket fd is still open on
+# the client side.  On stream_replay: re-entry WaitLatchOrSocket registers the
+# still-valid fd; epoll_ctl succeeds and only the buffered EOF produces the
+# second exception through the PQstatus check.
+#
+# With SIGKILL, the walsender dies immediately with no cleanup and no CopyDone.
+# libpq reads a raw EOF (or RST), calls pqDropConnection which CLOSES conn->sock,
+# and PQstatus flips to CONNECTION_BAD before the first exception fires:
+#
+#   "connection to other side has died"
+#
+# On stream_replay: re-entry the fd is already closed.  WaitLatchOrSocket calls
+# epoll_ctl(EPOLL_CTL_ADD, closed_fd) which returns EBADF (closed) or EINVAL
+# (if the fd number was reused for a non-pollable resource), triggering:
+#
+#   ERROR: epoll_ctl() failed: Bad file descriptor   (Linux)
+#
+# Note: SIGKILL on a PostgreSQL backend triggers crash recovery on n1; the
+# postmaster restarts automatically and n1 comes back up within a few seconds.
 # ---------------------------------------------------------------------------
 
-my $killed = scalar_query(1,
-    "SELECT count(pg_terminate_backend(pid)) " .
-    "FROM pg_stat_replication " .
-    "WHERE state = 'streaming'");
+my $walsender_pid = scalar_query(1,
+    "SELECT pid FROM pg_stat_replication WHERE state = 'streaming' LIMIT 1");
 
-diag("Walsenders terminated on n1: $killed");
+diag("Walsender PID on n1: " . ($walsender_pid // 'none'));
 
-if (!defined $killed || $killed == 0) {
-    diag("WARNING: no streaming walsender found — apply worker may not have been active yet");
+my $signaled = 0;
+if (defined $walsender_pid && $walsender_pid =~ /^\d+$/) {
+    $signaled = kill 9, int($walsender_pid);
+    diag("SIGKILL to walsender PID $walsender_pid: " . ($signaled ? "sent" : "failed - $!"));
 }
 
-# Give n2 time to detect the dead socket and enter the exception path.
-# The first exception fires immediately; the second (stale-fd re-entry) fires
-# within milliseconds on macOS (EOF already in TCP buffer) or as an
-# epoll_ctl/kevent error on Linux.  5 s is ample for both paths.
-sleep(5);
+if (!$signaled) {
+    diag("WARNING: could not SIGKILL walsender — apply worker may not have been streaming yet");
+}
+
+# Give n2 time to detect the dead socket, enter stream_replay:, and hit the
+# epoll_ctl error.  Also allows n1 time to complete crash recovery so the
+# subscription can reconnect.  10 s covers both.
+sleep(10);
 
 # ---------------------------------------------------------------------------
 # Read new log entries on n2 since the offset.
@@ -221,10 +243,25 @@ if ($eeh) {
     diag("     entering WaitLatchOrSocket; exit cleanly if connection is dead.");
 }
 
-# Supplemental: Linux-specific epoll/kevent error message.
-if ($wait_event_error) {
-    diag("Linux wait-event OS error detected (epoll_ctl EINVAL / kevent EBADF).");
-    diag("This is the Linux path for the same stale-fd bug.");
+# Linux-specific OS-level assertion.
+#
+# With SIGKILL, pqDropConnection closes conn->sock before stream_replay: is
+# entered.  WaitLatchOrSocket then calls epoll_ctl(EPOLL_CTL_ADD, closed_fd)
+# which returns EBADF (fd just closed) or EINVAL (fd reused as non-pollable),
+# raising ERROR "epoll_ctl() failed: <reason>".
+#
+# On macOS, kevent() with nevents=0 silently ignores bad fds (returns 0 not
+# -1), so this message never appears there; the bug is caught via $eeh above.
+SKIP: {
+    skip 'epoll_ctl error is Linux-specific (macOS kevent silently ignores bad fds)', 1
+        unless $^O eq 'linux';
+    ok($wait_event_error,
+        'Linux: epoll_ctl error from closed fd detected in stream_replay: path');
+    if (!$wait_event_error) {
+        diag("epoll_ctl error not seen — fd may not have been closed before stream_replay");
+        diag("re-entry (first exception was 'data stream ended', not 'connection to other");
+        diag("side has died', meaning pqDropConnection had not yet run)");
+    }
 }
 
 # ---------------------------------------------------------------------------
