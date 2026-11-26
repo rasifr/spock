@@ -3608,6 +3608,123 @@ strip_subscriber_catalog(SubscriberCreateContext *ctx)
 }
 
 /*
+ * Pass A of the bidirectional activation: everything that only makes n3 catch
+ * up with the cluster.  The catchup subscription, the disabled and then
+ * enabled peer subscriptions, the coverage barrier and the forwarding clear
+ * all run here; so do the waits that can stall on a slow or lagging peer.
+ * Besides the slots and sync events the barrier creates on the source and the
+ * peers, the existing cluster is untouched: no existing node subscribes to n3
+ * until bidir_publish_phase().
+ */
+static void
+bidir_catchup_phase(SubscriberCreateContext *ctx, const char *db)
+{
+	char	   *source_sub_name;
+	char	   *target_lsn;
+
+	source_sub_name = sub_name_for(ctx->subscriber_name, ctx->remote_info->node_name);
+
+	print_msg(VERBOSITY_NORMAL, _("Creating catchup subscription to the source...\n"));
+	print_msg(VERBOSITY_DEBUG,
+			  _("Creating subscription \"%s\" to source \"%s\" using slot "
+				"\"%s\", forward_origins={all}, enabled=false\n"),
+			  source_sub_name, redacted_connstr(ctx->prov_connstr),
+			  ctx->bidir.source_slot_name);
+	create_catchup_subscription(subscriber_conn, source_sub_name, ctx->prov_connstr,
+								ctx->replication_sets, ctx->bidir.source_slot_name,
+								ctx->bidir.source_restore_lsn);
+	print_msg(VERBOSITY_DEBUG,
+			  _("Subscription \"%s\" created, origin advanced to %s, and "
+				"enabled\n"), source_sub_name, ctx->bidir.source_restore_lsn);
+
+	print_msg(VERBOSITY_NORMAL, _("Creating disabled peer subscriptions...\n"));
+	create_disabled_peer_subscriptions(subscriber_conn, ctx->bidir.peers,
+									   ctx->bidir.num_peers, ctx->replication_sets);
+
+	print_msg(VERBOSITY_NORMAL, _("Getting catchup target from the source...\n"));
+	target_lsn = get_catchup_target_lsn(ctx->prov_connstr);
+	print_msg(VERBOSITY_DEBUG, _("Catchup target LSN: %s\n"), target_lsn);
+
+	print_msg(VERBOSITY_NORMAL, _("Waiting for catchup to the source...\n"));
+	print_msg(VERBOSITY_DEBUG,
+			  _("Waiting for subscription \"%s\" (origin \"%s\") to reach "
+				"LSN %s\n"), source_sub_name, ctx->bidir.source_slot_name, target_lsn);
+	wait_for_catchup(subscriber_conn, source_sub_name, ctx->bidir.source_slot_name,
+					 target_lsn, ctx->bidir.stall_timeout, ctx->bidir.max_wait);
+	pg_free(target_lsn);
+
+	maybe_test_pause_before("coverage_barrier");
+
+	print_msg(VERBOSITY_NORMAL, _("Establishing peer coverage barrier...\n"));
+	establish_peer_coverage_barrier(&ctx->bidir, subscriber_conn, ctx->prov_connstr,
+									ctx->remote_info->node_name, source_sub_name,
+									ctx->bidir.source_slot_name, ctx->subscriber_name, db,
+									ctx->base_prov_connstr, ctx->bidir.stall_timeout,
+									ctx->bidir.max_wait);
+	maybe_test_fail_after("coverage_barrier");
+
+	print_msg(VERBOSITY_NORMAL, _("Clearing forwarding on the catchup subscription...\n"));
+	clear_forwarding(subscriber_conn, ctx->prov_connstr, source_sub_name,
+					 ctx->bidir.source_slot_name, ctx->bidir.stall_timeout, ctx->bidir.max_wait);
+	maybe_test_fail_after("clear_forwarding");
+
+	print_msg(VERBOSITY_NORMAL, _("Enabling direct peer subscriptions...\n"));
+	enable_peer_subs(subscriber_conn, ctx->bidir.peers, ctx->bidir.num_peers,
+					 ctx->bidir.stall_timeout, ctx->bidir.max_wait);
+	maybe_test_fail_after("enable_peer_subs");
+
+	pg_free(source_sub_name);
+}
+
+/*
+ * Pass B: make the join visible to the rest of the cluster.  The reverse
+ * subscriptions on the source and every peer are the first change that makes
+ * an existing node start replicating to n3, so they come only after pass A
+ * has succeeded.
+ */
+static void
+bidir_publish_phase(SubscriberCreateContext *ctx, const char *db)
+{
+	char	   *source_sub_name;
+
+	source_sub_name = sub_name_for(ctx->subscriber_name, ctx->remote_info->node_name);
+
+	print_msg(VERBOSITY_NORMAL, _("Creating reverse subscriptions...\n"));
+	create_reverse_subscriptions(&ctx->bidir, ctx->subscriber_name, ctx->sub_connstr,
+								 ctx->replication_sets, ctx->prov_connstr,
+								 ctx->remote_info->node_name, db, ctx->base_prov_connstr);
+	maybe_test_fail_after("reverse_subs");
+
+	print_msg(VERBOSITY_NORMAL, _("Waiting for reverse subscriptions to be ready...\n"));
+	wait_for_reverse_subs_ready(&ctx->bidir, subscriber_conn, ctx->prov_connstr,
+								ctx->remote_info->node_name, ctx->subscriber_name,
+								ctx->bidir.stall_timeout, ctx->bidir.max_wait);
+	maybe_test_fail_after("reverse_subs_ready");
+
+	print_msg(VERBOSITY_NORMAL, _("Verifying bidirectional replication...\n"));
+	verify_bidirectional_dataflow(&ctx->bidir, subscriber_conn, ctx->prov_connstr,
+								  ctx->remote_info->node_name, source_sub_name,
+								  ctx->subscriber_name, ctx->bidir.stall_timeout, ctx->bidir.max_wait);
+	maybe_test_fail_after("verify");
+
+	pg_free(source_sub_name);
+}
+
+/*
+ * Lift the read-only mode and record the join as complete.  Only after every
+ * subscription is verified replicating both ways.
+ */
+static void
+bidir_finish_join(SubscriberCreateContext *ctx, const char *db)
+{
+	print_msg(VERBOSITY_NORMAL, _("Lifting read-only mode...\n"));
+	set_spock_readonly(subscriber_conn, "off");
+
+	ctx->bidir.join_complete = true;
+	write_manifest(&ctx->bidir, ctx->subscriber_name, db, ctx->base_prov_connstr);
+}
+
+/*
  * Phase 9: restart postgres with spock loaded, then bring the node
  * live -- for --bidirectional, the full go-live pipeline (local node
  * creation, readonly, replication-set restore, catchup subscription,
@@ -3693,87 +3810,9 @@ restart_with_spock_and_activate(SubscriberCreateContext *ctx)
 		ctx->bidir.node_dsn = ctx->sub_connstr;
 		write_manifest(&ctx->bidir, ctx->subscriber_name, db, ctx->base_prov_connstr);
 
-		{
-			char	   *source_sub_name;
-			char	   *target_lsn;
-
-			source_sub_name = sub_name_for(ctx->subscriber_name, ctx->remote_info->node_name);
-
-			print_msg(VERBOSITY_NORMAL, _("Creating catchup subscription to the source...\n"));
-			print_msg(VERBOSITY_DEBUG,
-					  _("Creating subscription \"%s\" to source \"%s\" using slot "
-						"\"%s\", forward_origins={all}, enabled=false\n"),
-					  source_sub_name, redacted_connstr(ctx->prov_connstr),
-					  ctx->bidir.source_slot_name);
-			create_catchup_subscription(subscriber_conn, source_sub_name, ctx->prov_connstr,
-										ctx->replication_sets, ctx->bidir.source_slot_name,
-										ctx->bidir.source_restore_lsn);
-			print_msg(VERBOSITY_DEBUG,
-					  _("Subscription \"%s\" created, origin advanced to %s, and "
-						"enabled\n"), source_sub_name, ctx->bidir.source_restore_lsn);
-
-			print_msg(VERBOSITY_NORMAL, _("Creating disabled peer subscriptions...\n"));
-			create_disabled_peer_subscriptions(subscriber_conn, ctx->bidir.peers,
-											   ctx->bidir.num_peers, ctx->replication_sets);
-
-			print_msg(VERBOSITY_NORMAL, _("Getting catchup target from the source...\n"));
-			target_lsn = get_catchup_target_lsn(ctx->prov_connstr);
-			print_msg(VERBOSITY_DEBUG, _("Catchup target LSN: %s\n"), target_lsn);
-
-			print_msg(VERBOSITY_NORMAL, _("Waiting for catchup to the source...\n"));
-			print_msg(VERBOSITY_DEBUG,
-					  _("Waiting for subscription \"%s\" (origin \"%s\") to reach "
-						"LSN %s\n"), source_sub_name, ctx->bidir.source_slot_name, target_lsn);
-			wait_for_catchup(subscriber_conn, source_sub_name, ctx->bidir.source_slot_name,
-							 target_lsn, ctx->bidir.stall_timeout, ctx->bidir.max_wait);
-			pg_free(target_lsn);
-
-			maybe_test_pause_before("coverage_barrier");
-
-			print_msg(VERBOSITY_NORMAL, _("Establishing peer coverage barrier...\n"));
-			establish_peer_coverage_barrier(&ctx->bidir, subscriber_conn, ctx->prov_connstr,
-											ctx->remote_info->node_name, source_sub_name,
-											ctx->bidir.source_slot_name, ctx->subscriber_name, db,
-											ctx->base_prov_connstr, ctx->bidir.stall_timeout,
-											ctx->bidir.max_wait);
-			maybe_test_fail_after("coverage_barrier");
-
-			print_msg(VERBOSITY_NORMAL, _("Clearing forwarding on the catchup subscription...\n"));
-			clear_forwarding(subscriber_conn, ctx->prov_connstr, source_sub_name,
-							 ctx->bidir.source_slot_name, ctx->bidir.stall_timeout, ctx->bidir.max_wait);
-			maybe_test_fail_after("clear_forwarding");
-
-			print_msg(VERBOSITY_NORMAL, _("Enabling direct peer subscriptions...\n"));
-			enable_peer_subs(subscriber_conn, ctx->bidir.peers, ctx->bidir.num_peers,
-							 ctx->bidir.stall_timeout, ctx->bidir.max_wait);
-			maybe_test_fail_after("enable_peer_subs");
-
-			print_msg(VERBOSITY_NORMAL, _("Creating reverse subscriptions...\n"));
-			create_reverse_subscriptions(&ctx->bidir, ctx->subscriber_name, ctx->sub_connstr,
-										 ctx->replication_sets, ctx->prov_connstr,
-										 ctx->remote_info->node_name, db, ctx->base_prov_connstr);
-			maybe_test_fail_after("reverse_subs");
-
-			print_msg(VERBOSITY_NORMAL, _("Waiting for reverse subscriptions to be ready...\n"));
-			wait_for_reverse_subs_ready(&ctx->bidir, subscriber_conn, ctx->prov_connstr,
-										ctx->remote_info->node_name, ctx->subscriber_name,
-										ctx->bidir.stall_timeout, ctx->bidir.max_wait);
-			maybe_test_fail_after("reverse_subs_ready");
-
-			print_msg(VERBOSITY_NORMAL, _("Verifying bidirectional replication...\n"));
-			verify_bidirectional_dataflow(&ctx->bidir, subscriber_conn, ctx->prov_connstr,
-										  ctx->remote_info->node_name, source_sub_name,
-										  ctx->subscriber_name, ctx->bidir.stall_timeout, ctx->bidir.max_wait);
-			maybe_test_fail_after("verify");
-
-			pg_free(source_sub_name);
-
-			print_msg(VERBOSITY_NORMAL, _("Lifting read-only mode...\n"));
-			set_spock_readonly(subscriber_conn, "off");
-
-			ctx->bidir.join_complete = true;
-			write_manifest(&ctx->bidir, ctx->subscriber_name, db, ctx->base_prov_connstr);
-		}
+		bidir_catchup_phase(ctx, db);
+		bidir_publish_phase(ctx, db);
+		bidir_finish_join(ctx, db);
 
 		PQfinish(subscriber_conn);
 		subscriber_conn = NULL;
