@@ -355,6 +355,7 @@ static void check_node_ready_for_join(PGconn *conn, const char *node_label,
 									  int slots_needed, int senders_needed,
 									  const char *reverse_sub_name,
 									  const char *peer_slot_name);
+static void wait_for_outbound_drain(PGconn *conn);
 static void check_backup_disk_space(PGconn *source_conn);
 static void check_subscriber_dsn_unused(const char *sub_connstr);
 static void check_spock_version_at_least_6(PGconn *conn, const char *node_label);
@@ -1159,6 +1160,117 @@ check_replication_set_equivalence(PGconn *source_conn, PeerNodeInfo *peers, int 
 }
 
 /*
+ * Seconds the outbound-drain wait tolerates without any slot making progress
+ * before it gives up.
+ */
+#define OUTBOUND_DRAIN_STALL_SECS 30
+
+/*
+ * Wait until every outbound spock slot of the source has confirmed the WAL
+ * position the source has reached right now.
+ *
+ * Comparing each slot with the current WAL position instead would never pass
+ * on a source that is being written to: a slot is always a little behind the
+ * end of WAL, and one background record is enough to fail the check at any
+ * instant.  Fixing the target once means later WAL cannot matter, so a source
+ * under steady load passes as soon as its peers have caught up with the target,
+ * while a slot that stops advancing (a disabled or broken peer subscription, a
+ * slot left behind by an earlier attempt) is still rejected after
+ * OUTBOUND_DRAIN_STALL_SECS without progress.  This runs before the base
+ * backup, so waiting here costs nothing and rejecting here wastes nothing.
+ */
+static void
+wait_for_outbound_drain(PGconn *conn)
+{
+	PQExpBuffer query = createPQExpBuffer();
+	PGresult   *res;
+	char	   *target;
+	char	   *target_lit;
+	int			prev_count = -1;
+	double		prev_total = -1;
+	time_t		last_progress = time(NULL);
+	bool		announced = false;
+
+	res = debug_exec(conn, "SELECT pg_current_wal_lsn()");
+	if (PQresultStatus(res) != PGRES_TUPLES_OK || PQntuples(res) != 1)
+		die(_("could not read the source's WAL position: %s"),
+			PQerrorMessage(conn));
+	target = pg_strdup(PQgetvalue(res, 0, 0));
+	PQclear(res);
+
+	target_lit = PQescapeLiteral(conn, target, strlen(target));
+	printfPQExpBuffer(query,
+					  "SELECT slot_name, active,"
+					  " pg_wal_lsn_diff(%s::pg_lsn, confirmed_flush_lsn)"
+					  " FROM pg_replication_slots"
+					  " WHERE slot_type = 'logical' AND plugin = 'spock_output'"
+					  " AND (confirmed_flush_lsn IS NULL"
+					  "      OR confirmed_flush_lsn < %s::pg_lsn)"
+					  " ORDER BY slot_name",
+					  target_lit, target_lit);
+	PQfreemem(target_lit);
+
+	for (;;)
+	{
+		int			n;
+		double		total = 0;
+		int			i;
+
+		res = debug_exec(conn, query->data);
+		if (PQresultStatus(res) != PGRES_TUPLES_OK)
+			die(_("could not check replication slot lag: %s"),
+				PQerrorMessage(conn));
+		n = PQntuples(res);
+		if (n == 0)
+		{
+			PQclear(res);
+			break;
+		}
+
+		for (i = 0; i < n; i++)
+			if (!PQgetisnull(res, i, 2))
+				total += strtod(PQgetvalue(res, i, 2), NULL);
+
+		/* progress: fewer slots behind, or fewer bytes behind in total */
+		if (prev_count < 0 || n < prev_count || total < prev_total)
+			last_progress = time(NULL);
+		prev_count = n;
+		prev_total = total;
+
+		if (!announced)
+		{
+			print_msg(VERBOSITY_VERBOSE,
+					  _("Waiting for %d outbound replication slot(s) to confirm "
+						"the changes committed up to %s ...\n"), n, target);
+			announced = true;
+		}
+
+		if (time(NULL) - last_progress >= OUTBOUND_DRAIN_STALL_SECS)
+		{
+			PQExpBuffer list = createPQExpBuffer();
+
+			for (i = 0; i < n; i++)
+				appendPQExpBuffer(list, "%s%s (%s)", i > 0 ? ", " : "",
+								  PQgetvalue(res, i, 0),
+								  strcmp(PQgetvalue(res, i, 1), "t") == 0 ?
+								  "active" : "inactive");
+			PQclear(res);
+			die(_("source has unreplicated changes pending to an existing peer: "
+				  "no progress for %d seconds on %s; wait for replication to "
+				  "drain before joining"),
+				OUTBOUND_DRAIN_STALL_SECS, list->data);
+		}
+		PQclear(res);
+
+		sleep(1);
+		die_if_time_to_stop();
+	}
+
+	pg_free(target);
+	destroyPQExpBuffer(query);
+}
+
+/*
  * Read-only checks that a node taking part in the join can still do its share
  * of it, so a problem surfaces before the first side effect rather than after
  * the base backup.  Peers' slots and the reverse subscriptions are created
@@ -1376,25 +1488,14 @@ check_preconditions(PGconn *source_conn, const char *source_node_name,
 	PQclear(res);
 
 	/*
-	 * All outbound replication caught up to the source's current WAL position
-	 * -- i.e. nothing (DDL or data) still in flight to an existing peer.
+	 * Everything committed on the source so far must have reached its existing
+	 * peers, i.e. nothing (DDL or data) is still in flight to them.
 	 * spock.queue's row count is not a usable signal here: queue_message()
 	 * (spock_queue.c) only ever inserts into it, so its count is
 	 * monotonically non-decreasing and is never zero on any node that has
 	 * replicated so much as a single DDL statement.
 	 */
-	res = debug_exec(source_conn,
-					 "SELECT COUNT(*) FROM pg_replication_slots"
-					 " WHERE slot_type = 'logical' AND plugin = 'spock_output'"
-					 " AND (confirmed_flush_lsn IS NULL"
-					 "      OR confirmed_flush_lsn < pg_current_wal_lsn())");
-	if (PQresultStatus(res) != PGRES_TUPLES_OK)
-		die(_("could not check replication slot lag: %s"),
-			PQerrorMessage(source_conn));
-	if (strcmp(PQgetvalue(res, 0, 0), "0") != 0)
-		die(_("source has unreplicated changes pending to an existing peer; "
-			  "wait for replication to drain before joining"));
-	PQclear(res);
+	wait_for_outbound_drain(source_conn);
 
 	/* Full-mesh directed-graph check, from the source's own perspective. */
 	check_mesh_edges(source_conn, source_node_name, all_names, total_nodes);

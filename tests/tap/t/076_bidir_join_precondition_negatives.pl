@@ -299,6 +299,8 @@ ok(!system_maybe($SCS_BIN,
       '--provider-dsn',      $n1_dsn,
       '--subscriber-dsn',    "host=$host port=" . ($node_ports->[1] + 105) . " dbname=$dbname"),
    '--bidirectional rejects source with undrained outbound lag to a peer');
+ok(log_tail_has(qr/unreplicated changes pending to an existing peer: no progress for \d+ seconds on spk_\w*n2\w* \((?:in)?active\)/, $before),
+   'rejection names the stalled outbound slot and says there was no progress');
 remove_tree($dir5) if -d $dir5;
 
 system_or_bail "$pg_bin/psql", '-q', '-p', $node_ports->[1], '-d', $dbname, '-c',
@@ -852,6 +854,51 @@ ok(log_tail_has(qr/a server is already listening at --subscriber-dsn/, $before),
    'a refused login still counts as a server listening');
 assert_no_side_effects($dir15b, $slots15, 'subscriber DSN in use, login refused');
 remove_tree($dir15b) if -d $dir15b;
+
+# Scenario 15c: a source that is being written to must not trip the outbound
+# drain check.  Every outbound slot is always a little behind the end of WAL
+# while writes continue, so a check that compares slots with the live WAL
+# position rejects such a source nearly every time (measured: 2494 of 2500
+# samples at ten small inserts a second).  The join is pointed at a live server
+# as --subscriber-dsn so that it stops right after the pre-flight checks; what
+# matters is that the stop is for that reason and not for the drain check.
+note("Scenario 15c: outbound drain check under steady writes on the source");
+system_or_bail "$pg_bin/psql", '-q', '-p', $node_ports->[0], '-d', $dbname, '-c',
+    "CREATE TABLE pn_steady_load (id serial PRIMARY KEY, v text)";
+wait_for_n1_drained();
+
+my $writer = fork();
+die "fork failed: $!" unless defined $writer;
+if ($writer == 0) {
+    exec("$pg_bin/psql", '-q', '-p', $node_ports->[0], '-d', $dbname, '-c',
+         "DO \$\$ BEGIN FOR i IN 1..200 LOOP " .
+         "INSERT INTO pn_steady_load(v) VALUES (md5(i::text)); COMMIT; " .
+         "PERFORM pg_sleep(0.1); END LOOP; END \$\$;")
+        or die "exec failed: $!";
+}
+sleep(2);    # let the writer get going
+
+my $dir15c = fresh_datadir();
+$before = log_size();
+my $slots15c = slot_count();
+ok(!system_maybe($SCS_BIN,
+      '--bidirectional',
+      '--pgdata',            $dir15c,
+      '--subscriber-name',   'n3',
+      '--provider-dsn',      $n1_dsn,
+      '--subscriber-dsn',    $n2_dsn),
+   'the join stops at the pre-flight checks while the source is under write load');
+ok(log_tail_has(qr/a server is already listening at --subscriber-dsn/, $before),
+   'it got past the outbound drain check and stopped at the --subscriber-dsn check');
+ok(!log_tail_has(qr/unreplicated changes pending/, $before),
+   'steady writes did not make the outbound drain check reject the source');
+assert_no_side_effects($dir15c, $slots15c, 'drain check under load');
+remove_tree($dir15c) if -d $dir15c;
+
+waitpid($writer, 0);
+system_or_bail "$pg_bin/psql", '-q', '-p', $node_ports->[0], '-d', $dbname, '-c',
+    "DROP TABLE pn_steady_load";
+wait_for_n1_drained();
 
 # Scenario 16: a peer with no free replication slot.  max_replication_slots is
 # lowered to exactly the number of slots in use (a restart is needed), so the

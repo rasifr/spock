@@ -60,7 +60,7 @@ With `--bidirectional`, the utility joins the new node to an existing multi-mast
 - Spock 6.0.0 or later on every node.
 - `track_commit_timestamp = on` on the source and on every peer.
 - Every node in the cluster subscribed to every other node, with all those subscriptions replicating.
-- No unreplicated changes pending from the source to an existing peer.
+- Every change committed on the source when the check starts has reached its existing peers. The utility waits for them to catch up, and stops if no outbound slot makes progress for 30 seconds.
 - Exactly one Spock database on the source, and no enabled native logical subscriptions.
 - The same replication sets, with the same tables, row filters and table schemas, on the source and on each peer.
 
