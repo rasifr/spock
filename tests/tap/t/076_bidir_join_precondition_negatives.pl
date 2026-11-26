@@ -152,6 +152,23 @@ sub fresh_datadir {
     return $dir;
 }
 
+# A rejection by the pre-flight phase must leave no trace: no slot on the
+# source (counted before/after, so it does not depend on slot naming), no
+# pending-cleanup sidecar, and no data directory content (pg_basebackup needs
+# the directory empty, and the base backup is the expensive step to repeat).
+sub slot_count {
+    return scalar_query(1, "SELECT COUNT(*) FROM pg_replication_slots");
+}
+
+sub assert_no_side_effects {
+    my ($dir, $slots_before, $label) = @_;
+    is(slot_count(), $slots_before, "$label: no slot was created on the source");
+    ok(!-e "${dir}.spock_bidir_pending.json",
+       "$label: no pending-cleanup sidecar was written");
+    my @left = -d $dir ? glob("$dir/*") : ();
+    ok(!@left, "$label: the data directory was left untouched");
+}
+
 # =============================================================================
 # Scenario 1: peer unreachable at discovery.  A fully-down peer is caught by
 # check_mesh_edges() -- which reads sub_n1_n2's *local* status on n1, not a
@@ -645,9 +662,9 @@ is(psql_capture('-p', $node_ports->[0], '-d', $dbname, '-t', '-A', '-c', $n2_if_
 
 # =============================================================================
 # Scenario 10: a user object depending on the spock extension is rejected by
-# the DROP EXTENSION guard instead of being dropped by CASCADE.  The guard
-# runs on the new node after the base backup, so the join is torn down with
-# --cleanup afterwards.
+# the DROP EXTENSION guard instead of being dropped by CASCADE.  The pre-flight
+# phase runs the same guard against the source's catalogs, which are identical
+# to what the copy will hold, so the join stops before any slot or backup.
 # =============================================================================
 note("Scenario 10: user view depending on the spock extension");
 system_or_bail "$pg_bin/psql", '-q', '-p', $node_ports->[0], '-d', $dbname, '-c',
@@ -670,6 +687,7 @@ print $conf_fh_c "listen_addresses='*'\n";
 close $conf_fh_c;
 
 $before = log_size();
+my $slots10 = slot_count();
 ok(!system_maybe($SCS_BIN,
       '--bidirectional',
       '--pgdata',            $dir10,
@@ -680,13 +698,8 @@ ok(!system_maybe($SCS_BIN,
    '--bidirectional rejects a user view depending on the spock extension');
 ok(log_tail_has(qr/cannot drop the spock extension.*pn_dep_view/s, $before),
    'rejection names the dependent view');
+assert_no_side_effects($dir10, $slots10, 'dependent view');
 
-command_ok(
-    [ $SCS_BIN, '--bidirectional', '--cleanup', '--force', '--pgdata', $dir10 ],
-    '--cleanup --force removes the rejected join\'s state'
-);
-is(scalar_query(1, "SELECT COUNT(*) FROM pg_replication_slots WHERE slot_name LIKE 'spk_%n3%'"),
-   '0', 'no source slot remains after cleanup');
 system_or_bail "$pg_bin/psql", '-q', '-p', $node_ports->[0], '-d', $dbname, '-c',
     "SET spock.enable_ddl_replication = off; DROP VIEW pn_dep_view";
 remove_tree($dir10) if -d $dir10;
@@ -725,6 +738,221 @@ is(scalar_query(1, "SELECT COUNT(*) FROM pg_replication_slots WHERE slot_name LI
 remove_tree($dir11) if -d $dir11;
 unlink($n3c_auto) if -f $n3c_auto;
 unlink($n3c_conf) if -f $n3c_conf;
+
+# =============================================================================
+# Scenarios 12-16: rejections by the pre-flight phase.  Each is something that
+# used to surface only after the base backup (or never until the node was
+# already half built); each must now stop the join before any slot, sidecar or
+# data-directory content exists.
+# =============================================================================
+
+# Scenario 12: the new node's name collides with a node of the mesh.
+note("Scenario 12: subscriber name already used by a mesh node");
+my $dir12 = fresh_datadir();
+$before = log_size();
+my $slots12 = slot_count();
+ok(!system_maybe($SCS_BIN,
+      '--bidirectional',
+      '--pgdata',            $dir12,
+      '--subscriber-name',   'n2',
+      '--provider-dsn',      $n1_dsn,
+      '--subscriber-dsn',    "host=$host port=" . ($node_ports->[1] + 163) . " dbname=$dbname"),
+   '--bidirectional rejects a subscriber name used by a mesh node');
+ok(log_tail_has(qr/subscriber name "n2" is already used by a node/, $before),
+   'rejection names the colliding node');
+assert_no_side_effects($dir12, $slots12, 'name collision');
+remove_tree($dir12) if -d $dir12;
+
+# Scenario 13: the slot the join would create on a peer already exists there.
+note("Scenario 13: peer slot already exists");
+my $peer_slot = psql_capture('-p', $node_ports->[0], '-d', $dbname, '-t', '-A', '-c',
+    "SELECT spock.spock_gen_slot_name('$dbname', 'n2', 'sub_n3_n2')");
+ok($peer_slot =~ /^spk_/, "computed the peer slot name ($peer_slot)");
+system_or_bail "$pg_bin/psql", '-q', '-p', $node_ports->[1], '-d', $dbname, '-c',
+    "SELECT pg_create_logical_replication_slot('$peer_slot', 'spock_output')";
+wait_for_n1_drained();
+
+my $dir13 = fresh_datadir();
+$before = log_size();
+my $slots13 = slot_count();
+ok(!system_maybe($SCS_BIN,
+      '--bidirectional',
+      '--pgdata',            $dir13,
+      '--subscriber-name',   'n3',
+      '--provider-dsn',      $n1_dsn,
+      '--subscriber-dsn',    "host=$host port=" . ($node_ports->[1] + 164) . " dbname=$dbname"),
+   '--bidirectional rejects a peer slot that already exists');
+ok(log_tail_has(qr/replication slot "\Q$peer_slot\E" already exists on "n2"/, $before),
+   'rejection names the slot and the peer');
+assert_no_side_effects($dir13, $slots13, 'existing peer slot');
+remove_tree($dir13) if -d $dir13;
+system_or_bail "$pg_bin/psql", '-q', '-p', $node_ports->[1], '-d', $dbname, '-c',
+    "SELECT pg_drop_replication_slot('$peer_slot')";
+
+# Scenario 14: a reverse subscription from an earlier attempt is still on a peer.
+note("Scenario 14: leftover reverse subscription on a peer");
+# sub_create() insists on the DSN n2 already has recorded for n1.
+my $n1_if_dsn = psql_capture('-p', $node_ports->[1], '-d', $dbname, '-t', '-A', '-c',
+    "SELECT if_dsn FROM spock.node_interface WHERE if_nodeid = " .
+    "(SELECT node_id FROM spock.node WHERE node_name = 'n1')");
+system_or_bail "$pg_bin/psql", '-q', '-p', $node_ports->[1], '-d', $dbname, '-c',
+    "SELECT spock.sub_create(subscription_name := 'sub_n2_n3', " .
+    "provider_dsn := \$\$$n1_if_dsn\$\$, synchronize_structure := false, " .
+    "synchronize_data := false, enabled := false)";
+my $dir14 = fresh_datadir();
+$before = log_size();
+my $slots14 = slot_count();
+ok(!system_maybe($SCS_BIN,
+      '--bidirectional',
+      '--pgdata',            $dir14,
+      '--subscriber-name',   'n3',
+      '--provider-dsn',      $n1_dsn,
+      '--subscriber-dsn',    "host=$host port=" . ($node_ports->[1] + 165) . " dbname=$dbname"),
+   '--bidirectional rejects a leftover reverse subscription on a peer');
+ok(log_tail_has(qr/subscription "sub_n2_n3" already exists on "n2"/, $before),
+   'rejection names the subscription and the peer');
+assert_no_side_effects($dir14, $slots14, 'leftover reverse subscription');
+remove_tree($dir14) if -d $dir14;
+system_or_bail "$pg_bin/psql", '-q', '-p', $node_ports->[1], '-d', $dbname, '-c',
+    "SELECT spock.sub_drop('sub_n2_n3')";
+wait_for_n1_drained();
+
+# Scenario 15: a server is already listening at --subscriber-dsn (here
+# the peer itself), so it cannot be the address of the not-yet-existing node.
+note("Scenario 15: --subscriber-dsn already reachable");
+my $dir15 = fresh_datadir();
+$before = log_size();
+my $slots15 = slot_count();
+ok(!system_maybe($SCS_BIN,
+      '--bidirectional',
+      '--pgdata',            $dir15,
+      '--subscriber-name',   'n3',
+      '--provider-dsn',      $n1_dsn,
+      '--subscriber-dsn',    $n2_dsn),
+   '--bidirectional rejects a --subscriber-dsn where a server is listening');
+ok(log_tail_has(qr/a server is already listening at --subscriber-dsn/, $before),
+   'rejection explains the DSN must be the new node\'s');
+assert_no_side_effects($dir15, $slots15, 'subscriber DSN in use');
+remove_tree($dir15) if -d $dir15;
+
+# The same, but the server would refuse our login (unknown role).  It is
+# still a server in the way, which only a ping, not a real connection, sees.
+wait_for_n1_drained();
+my $dir15b = fresh_datadir();
+$before = log_size();
+ok(!system_maybe($SCS_BIN,
+      '--bidirectional',
+      '--pgdata',            $dir15b,
+      '--subscriber-name',   'n3',
+      '--provider-dsn',      $n1_dsn,
+      '--subscriber-dsn',    "host=$host port=$node_ports->[1] dbname=$dbname"
+                           . " user=pn_no_such_role password=wrong"),
+   '--bidirectional rejects a --subscriber-dsn whose server would refuse the login');
+ok(log_tail_has(qr/a server is already listening at --subscriber-dsn/, $before),
+   'a refused login still counts as a server listening');
+assert_no_side_effects($dir15b, $slots15, 'subscriber DSN in use, login refused');
+remove_tree($dir15b) if -d $dir15b;
+
+# Scenario 16: a peer with no free replication slot.  max_replication_slots is
+# lowered to exactly the number of slots in use (a restart is needed), so the
+# one slot the join must create there cannot exist.
+note("Scenario 16: peer without a free replication slot");
+my $n2_slots = psql_capture('-p', $node_ports->[1], '-d', $dbname, '-t', '-A', '-c',
+                            "SELECT count(*) FROM pg_replication_slots");
+system_or_bail "$pg_bin/psql", '-q', '-p', $node_ports->[1], '-d', $dbname, '-c',
+    "ALTER SYSTEM SET max_replication_slots = $n2_slots";
+system_or_bail "$pg_bin/pg_ctl", 'restart', '-w', '-D', $n2_datadir, '-m', 'fast',
+    '-l', "$config->{log_dir}/n2_scenario16_restart.log";
+ok(wait_for_pg_ready($host, $node_ports->[1], $pg_bin, 30), 'n2 restarted with a full slot table')
+    or BAIL_OUT('cannot continue without n2 back up');
+ok(wait_for_sub_status(1, 'sub_n1_n2', 'replicating', 60)
+   && wait_for_sub_status(2, 'sub_n2_n1', 'replicating', 60),
+   'the n1 <-> n2 subscriptions are replicating again')
+    or BAIL_OUT('mesh did not recover after the n2 restart');
+wait_for_n1_drained();
+
+my $dir16 = fresh_datadir();
+$before = log_size();
+my $slots16 = slot_count();
+ok(!system_maybe($SCS_BIN,
+      '--bidirectional',
+      '--pgdata',            $dir16,
+      '--subscriber-name',   'n3',
+      '--provider-dsn',      $n1_dsn,
+      '--subscriber-dsn',    "host=$host port=" . ($node_ports->[1] + 166) . " dbname=$dbname"),
+   '--bidirectional rejects a peer with no free replication slot');
+ok(log_tail_has(qr/"n2" has 0 free replication slot\(s\) but the join needs 1/, $before),
+   'rejection names the peer and max_replication_slots');
+assert_no_side_effects($dir16, $slots16, 'full peer slot table');
+remove_tree($dir16) if -d $dir16;
+
+system_or_bail "$pg_bin/psql", '-q', '-p', $node_ports->[1], '-d', $dbname, '-c',
+    "ALTER SYSTEM RESET max_replication_slots";
+system_or_bail "$pg_bin/pg_ctl", 'restart', '-w', '-D', $n2_datadir, '-m', 'fast',
+    '-l', "$config->{log_dir}/n2_scenario16_restore.log";
+ok(wait_for_pg_ready($host, $node_ports->[1], $pg_bin, 30), 'n2 restarted with its normal slot limit')
+    or BAIL_OUT('cannot continue without n2 back up');
+ok(wait_for_sub_status(1, 'sub_n1_n2', 'replicating', 60)
+   && wait_for_sub_status(2, 'sub_n2_n1', 'replicating', 60),
+   'the n1 <-> n2 subscriptions are replicating again')
+    or BAIL_OUT('mesh did not recover after the n2 restart');
+wait_for_n1_drained();
+
+# Scenario 17: not enough free disk space for the base backup, and the
+# dedicated option that turns that check off.  Needs a small filesystem, which
+# is only built here on macOS (hdiutil RAM disk), so elsewhere the scenario is
+# skipped loudly rather than passing with fewer tests.
+note("Scenario 17: free disk space for the base backup");
+SKIP: {
+    skip "needs a small RAM disk, built with hdiutil on macOS only", 7
+        unless $^O eq 'darwin' && -x '/usr/bin/hdiutil';
+
+    my $ramdev = `hdiutil attach -nomount ram://65536 2>/dev/null`;
+    $ramdev =~ s/\s+//g;
+    skip "could not create a RAM disk", 7 unless $ramdev =~ m{^/dev/disk\d+$};
+    my $mnt = '/tmp/spock_pn_tiny_mnt';
+    mkdir $mnt unless -d $mnt;
+    if (system("newfs_hfs -v spocktiny $ramdev >/dev/null 2>&1") != 0
+        || system("diskutil mount -mountPoint $mnt $ramdev >/dev/null 2>&1") != 0)
+    {
+        system("hdiutil detach $ramdev >/dev/null 2>&1");
+        skip "could not format and mount the RAM disk", 7;
+    }
+
+    my $dir17 = "$mnt/n3";
+    $before = log_size();
+    my $slots17 = slot_count();
+    ok(!system_maybe($SCS_BIN,
+          '--bidirectional',
+          '--pgdata',            $dir17,
+          '--subscriber-name',   'n3',
+          '--provider-dsn',      $n1_dsn,
+          '--subscriber-dsn',    "host=$host port=" . ($node_ports->[1] + 167) . " dbname=$dbname"),
+       '--bidirectional rejects a target filesystem too small for the backup');
+    ok(log_tail_has(qr/not enough free disk space for the base backup.*--skip-disk-space-check/s, $before),
+       'rejection reports the shortfall and names --skip-disk-space-check');
+    assert_no_side_effects($dir17, $slots17, 'too little disk space');
+
+    # With the check off the join gets as far as the copy and then runs out of
+    # space; what matters is that the estimate no longer stops it first.
+    $before = log_size();
+    ok(!system_maybe($SCS_BIN,
+          '--bidirectional',
+          '--skip-disk-space-check',
+          '--pgdata',            $dir17,
+          '--subscriber-name',   'n3',
+          '--provider-dsn',      $n1_dsn,
+          '--subscriber-dsn',    "host=$host port=" . ($node_ports->[1] + 167) . " dbname=$dbname"),
+       'with --skip-disk-space-check the join proceeds to the copy and fails there');
+    ok(!log_tail_has(qr/not enough free disk space/, $before),
+       'the disk-space estimate was not applied');
+
+    command_ok(
+        [ $SCS_BIN, '--bidirectional', '--cleanup', '--force', '--pgdata', $dir17 ],
+        '--cleanup --force removes the failed copy\'s state'
+    );
+    system("diskutil unmount force $mnt >/dev/null 2>&1; hdiutil detach $ramdev >/dev/null 2>&1");
+}
 
 # =============================================================================
 # CLEANUP

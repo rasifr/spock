@@ -53,6 +53,7 @@ With `--bidirectional`, the utility joins the new node to an existing multi-mast
 | `--max-wait=SECS` | A hard ceiling, in seconds, on the catchup wait after the connection is made (default: unbounded). It does not bound PostgreSQL's own startup.
 | `--cleanup` | Remove the partial state of an interrupted join and exit. Stops PostgreSQL if it is running in `--pgdata`.
 | `--force` | With `--cleanup`, also remove the data directory. Required when the manifest records a completed join.
+| `--skip-disk-space-check` | Before the base backup, the utility compares the free space in the `--pgdata` filesystem with the size of the source's `pg_default` and `pg_global` tablespaces, and stops if it is too small. That figure assumes an uncompressed copy; use this option when the backup or the filesystem compresses it.
 
 `--subscriber-dsn` must be an address the existing nodes can use to connect back to the new node. The join requires:
 
