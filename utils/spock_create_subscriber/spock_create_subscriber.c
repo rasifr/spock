@@ -350,13 +350,17 @@ static int	discover_peer_nodes(PGconn *source_conn, const char *source_node_name
 								PeerNodeInfo **peers_out);
 static void check_preconditions(PGconn *source_conn, const char *source_node_name,
 								const char *subscriber_name,
-								PeerNodeInfo *peers, int num_peers);
+								PeerNodeInfo *peers, int num_peers,
+								int source_slots_needed,
+								const char *source_slot_name);
 static void check_node_ready_for_join(PGconn *conn, const char *node_label,
 									  int slots_needed, int senders_needed,
+									  const char *subscriber_name,
 									  const char *reverse_sub_name,
 									  const char *peer_slot_name);
-static void wait_for_outbound_drain(PGconn *conn);
+static void wait_for_outbound_drain(PGconn *conn, const char *ignore_slot);
 static void check_backup_disk_space(PGconn *source_conn);
+static void check_new_node_config(PGconn *source_conn, SubscriberCreateContext *ctx);
 static void check_subscriber_dsn_unused(const char *sub_connstr);
 static void check_spock_version_at_least_6(PGconn *conn, const char *node_label);
 static void check_mesh_edges(PGconn *conn, const char *this_node_name,
@@ -1178,14 +1182,20 @@ check_replication_set_equivalence(PGconn *source_conn, PeerNodeInfo *peers, int 
  * slot left behind by an earlier attempt) is still rejected after
  * OUTBOUND_DRAIN_STALL_SECS without progress.  This runs before the base
  * backup, so waiting here costs nothing and rejecting here wastes nothing.
+ *
+ * ignore_slot is the slot this run is about to create on the source.  One
+ * left behind by an earlier attempt never advances, and --drop-slot-if-exists
+ * replaces it, so it must not count as pending work (without the option the
+ * run is rejected before this point).
  */
 static void
-wait_for_outbound_drain(PGconn *conn)
+wait_for_outbound_drain(PGconn *conn, const char *ignore_slot)
 {
 	PQExpBuffer query = createPQExpBuffer();
 	PGresult   *res;
 	char	   *target;
 	char	   *target_lit;
+	char	   *ignore_lit;
 	int			prev_count = -1;
 	double		prev_total = -1;
 	time_t		last_progress = time(NULL);
@@ -1199,16 +1209,21 @@ wait_for_outbound_drain(PGconn *conn)
 	PQclear(res);
 
 	target_lit = PQescapeLiteral(conn, target, strlen(target));
+	ignore_lit = PQescapeLiteral(conn, ignore_slot, strlen(ignore_slot));
+	if (target_lit == NULL || ignore_lit == NULL)
+		die(_("out of memory"));
 	printfPQExpBuffer(query,
 					  "SELECT slot_name, active,"
 					  " pg_wal_lsn_diff(%s::pg_lsn, confirmed_flush_lsn)"
 					  " FROM pg_replication_slots"
 					  " WHERE slot_type = 'logical' AND plugin = 'spock_output'"
+					  " AND slot_name <> %s"
 					  " AND (confirmed_flush_lsn IS NULL"
 					  "      OR confirmed_flush_lsn < %s::pg_lsn)"
 					  " ORDER BY slot_name",
-					  target_lit, target_lit);
+					  target_lit, ignore_lit, target_lit);
 	PQfreemem(target_lit);
+	PQfreemem(ignore_lit);
 
 	for (;;)
 	{
@@ -1239,7 +1254,7 @@ wait_for_outbound_drain(PGconn *conn)
 
 		if (!announced)
 		{
-			print_msg(VERBOSITY_VERBOSE,
+			print_msg(VERBOSITY_NORMAL,
 					  _("Waiting for %d outbound replication slot(s) to confirm "
 						"the changes committed up to %s ...\n"), n, target);
 			announced = true;
@@ -1285,6 +1300,7 @@ wait_for_outbound_drain(PGconn *conn)
 static void
 check_node_ready_for_join(PGconn *conn, const char *node_label,
 						  int slots_needed, int senders_needed,
+						  const char *subscriber_name,
 						  const char *reverse_sub_name, const char *peer_slot_name)
 {
 	PQExpBuffer query = createPQExpBuffer();
@@ -1321,9 +1337,17 @@ check_node_ready_for_join(PGconn *conn, const char *node_label,
 			  "raise max_wal_senders there"),
 			node_label, free_senders, senders_needed);
 
-	printfPQExpBuffer(query,
-					  "SELECT 1 FROM spock.subscription WHERE sub_name = %s",
-					  PQescapeLiteral(conn, reverse_sub_name, strlen(reverse_sub_name)));
+	{
+		char	   *lit = PQescapeLiteral(conn, reverse_sub_name,
+										  strlen(reverse_sub_name));
+
+		if (lit == NULL)
+			die(_("out of memory"));
+		printfPQExpBuffer(query,
+						  "SELECT 1 FROM spock.subscription WHERE sub_name = %s",
+						  lit);
+		PQfreemem(lit);
+	}
 	res = debug_exec(conn, query->data);
 	if (PQresultStatus(res) != PGRES_TUPLES_OK)
 		die(_("could not check for an existing subscription \"%s\" on \"%s\": %s"),
@@ -1332,6 +1356,33 @@ check_node_ready_for_join(PGconn *conn, const char *node_label,
 		die(_("subscription \"%s\" already exists on \"%s\", probably left "
 			  "behind by an earlier join attempt; drop it (or run --cleanup) "
 			  "and retry"), reverse_sub_name, node_label);
+	PQclear(res);
+
+	/*
+	 * A node row for the new node (spock.sub_drop() removes the one of its
+	 * last subscription, so this is left by hand or by a crash) makes creating
+	 * the reverse subscription fail after promotion when its address differs
+	 * from the new node's.  No node of that name may be known yet.
+	 */
+	{
+		char	   *lit = PQescapeLiteral(conn, subscriber_name,
+										  strlen(subscriber_name));
+
+		if (lit == NULL)
+			die(_("out of memory"));
+		printfPQExpBuffer(query,
+						  "SELECT 1 FROM spock.node WHERE node_name = %s", lit);
+		PQfreemem(lit);
+	}
+	res = debug_exec(conn, query->data);
+	if (PQresultStatus(res) != PGRES_TUPLES_OK)
+		die(_("could not check for an existing node \"%s\" on \"%s\": %s"),
+			subscriber_name, node_label, PQerrorMessage(conn));
+	if (PQntuples(res) > 0)
+		die(_("a spock node named \"%s\" is already known on \"%s\", "
+			  "probably left behind by an earlier join attempt; remove it "
+			  "(spock.node and spock.node_interface) and retry"),
+			subscriber_name, node_label);
 	PQclear(res);
 
 	if (peer_slot_name != NULL && replication_slot_exists(conn, peer_slot_name))
@@ -1343,62 +1394,288 @@ check_node_ready_for_join(PGconn *conn, const char *node_label,
 }
 
 /*
- * Make sure the filesystem that will hold the base backup has room for it,
- * before the copy is started.  Compares the free space with what pg_basebackup
- * will write under PGDATA (the pg_default and pg_global tablespaces; other
- * tablespaces live elsewhere).  The figure is an estimate of an uncompressed
- * copy, so --skip-disk-space-check turns the check off, for instance when
- * --extra-basebackup-args compresses the backup or the filesystem does.  It
- * is also skipped, with a note, when the size cannot be determined.
+ * Free space, in bytes, available to us on the filesystem holding path, which
+ * may not exist yet: the nearest existing ancestor of the absolute path is
+ * measured.  Returns false, after saying so, if that cannot be done.
+ */
+static bool
+free_bytes_at_path(const char *path_in, uint64 *avail)
+{
+	char	   *path;
+	struct statvfs sv;
+
+	if (is_absolute_path(path_in))
+		path = pg_strdup(path_in);
+	else
+	{
+		char		cwd[MAXPGPATH];
+
+		if (getcwd(cwd, sizeof(cwd)) == NULL)
+		{
+			print_msg(VERBOSITY_NORMAL,
+					  _("WARNING: not checking free disk space for \"%s\": "
+						"could not get the current directory: %s\n"),
+					  path_in, strerror(errno));
+			return false;
+		}
+		path = psprintf("%s/%s", cwd, path_in);
+	}
+
+	while (statvfs(path, &sv) != 0)
+	{
+		if (errno != ENOENT || strlen(path) <= 1)
+		{
+			print_msg(VERBOSITY_NORMAL,
+					  _("WARNING: not checking free disk space for \"%s\": "
+						"could not stat \"%s\": %s\n"),
+					  path_in, path, strerror(errno));
+			pg_free(path);
+			return false;
+		}
+		get_parent_directory(path);
+	}
+	pg_free(path);
+	*avail = (uint64) sv.f_bavail * (uint64) sv.f_frsize;
+	return true;
+}
+
+/*
+ * An early warning, before the base backup is started, that the new node may
+ * not have room for it.  The estimate is the total size of the source's
+ * databases plus 10% for the WAL streamed while the copy runs and for growth,
+ * compared with the free space on the filesystem holding --pgdata.  It is only
+ * an estimate: it assumes an uncompressed copy that lands entirely on that
+ * filesystem, so --skip-disk-space-check lets the join proceed regardless.
+ * A check that cannot be made is reported at normal verbosity, never skipped
+ * silently.  SPOCK_CREATE_SUBSCRIBER_TEST_FREE_BYTES replaces the measured
+ * free space, so tests can reach every branch on any platform; it has no
+ * effect unless set.
  */
 static void
 check_backup_disk_space(PGconn *source_conn)
 {
 	PGresult   *res;
-	struct statvfs sv;
-	char	   *path;
+	uint64		total;
 	uint64		needed;
 	uint64		available;
+	const char *forced = getenv("SPOCK_CREATE_SUBSCRIBER_TEST_FREE_BYTES");
 
 	res = debug_exec(source_conn,
-					 "SELECT coalesce(sum(pg_tablespace_size(oid)), 0)::bigint"
-					 " FROM pg_tablespace WHERE spcname IN ('pg_default', 'pg_global')");
+					 "SELECT coalesce(sum(pg_database_size(oid)), 0)::bigint"
+					 " FROM pg_database");
 	if (PQresultStatus(res) != PGRES_TUPLES_OK || PQntuples(res) != 1)
 	{
-		print_msg(VERBOSITY_VERBOSE,
-				  _("Skipping the free-disk-space check: could not determine "
-					"the source's size: %s"), PQerrorMessage(source_conn));
+		print_msg(VERBOSITY_NORMAL,
+				  _("WARNING: not checking free disk space: could not "
+					"determine the size of the source's databases: %s"),
+				  PQerrorMessage(source_conn));
 		PQclear(res);
 		return;
 	}
-	/* a little headroom for the WAL streamed alongside the copy */
-	needed = strtoull(PQgetvalue(res, 0, 0), NULL, 10) + UINT64CONST(64) * 1024 * 1024;
+	total = strtoull(PQgetvalue(res, 0, 0), NULL, 10);
 	PQclear(res);
 
-	/* data_dir may not exist yet: measure the nearest existing ancestor */
-	path = pg_strdup(data_dir);
-	while (statvfs(path[0] ? path : ".", &sv) != 0)
-	{
-		if (errno != ENOENT || strlen(path) <= 1 || strchr(path, '/') == NULL)
-		{
-			print_msg(VERBOSITY_VERBOSE,
-					  _("Skipping the free-disk-space check: could not stat "
-						"\"%s\": %s\n"), path, strerror(errno));
-			pg_free(path);
-			return;
-		}
-		get_parent_directory(path);
-	}
-	pg_free(path);
+	if (!free_bytes_at_path(data_dir, &available))
+		return;
+	if (forced)
+		available = strtoull(forced, NULL, 10);
 
-	available = (uint64) sv.f_bavail * (uint64) sv.f_frsize;
+	needed = total + total / 10;
 	if (available < needed)
 		die(_("not enough free disk space for the base backup in \"%s\": "
 			  "%llu MB available, about %llu MB needed\n"
-			  "The estimate assumes an uncompressed copy; if the backup or "
-			  "the filesystem compresses it, use --skip-disk-space-check.\n"),
-			data_dir, (unsigned long long) (available / (1024 * 1024)),
+			  "Free up space or choose another --pgdata; if the backup is "
+			  "compressed, or tablespaces go to other filesystems, check the "
+			  "space yourself and use --skip-disk-space-check to proceed.\n"),
+			data_dir,
+			(unsigned long long) (available / (1024 * 1024)),
 			(unsigned long long) (needed / (1024 * 1024)));
+}
+
+/*
+ * Value of the last "key = value" line for key in a postgresql.conf-style
+ * file, or NULL if there is none.  Handles optional '=', single quotes and
+ * trailing comments; it is enough for the plain integer settings read here.
+ */
+static char *
+conf_file_last_value(const char *path, const char *key)
+{
+	FILE	   *f = fopen(path, "r");
+	char		line[1024];
+	char	   *val = NULL;
+	size_t		klen = strlen(key);
+
+	if (f == NULL)
+		return NULL;
+	while (fgets(line, sizeof(line), f) != NULL)
+	{
+		char	   *p = line;
+		char	   *end;
+
+		while (isspace((unsigned char) *p))
+			p++;
+		if (pg_strncasecmp(p, key, klen) != 0)
+			continue;
+		p += klen;
+		if (!isspace((unsigned char) *p) && *p != '=')
+			continue;
+		while (isspace((unsigned char) *p))
+			p++;
+		if (*p == '=')
+			p++;
+		while (isspace((unsigned char) *p))
+			p++;
+		if (*p == '\'')
+		{
+			p++;
+			end = strchr(p, '\'');
+			if (end == NULL)
+				continue;
+			*end = '\0';
+		}
+		else
+		{
+			end = strchr(p, '#');
+			if (end != NULL)
+				*end = '\0';
+			end = p + strlen(p);
+			while (end > p && isspace((unsigned char) end[-1]))
+				*--end = '\0';
+		}
+		pg_free(val);
+		val = pg_strdup(p);
+	}
+	fclose(f);
+	return val;
+}
+
+/*
+ * The value a setting will have on the new node: it starts as a copy of the
+ * source's configuration, then --postgresql-conf replaces postgresql.conf and
+ * --postgresql-auto-conf is appended to postgresql.auto.conf (which beats
+ * postgresql.conf).  An ALTER SYSTEM value on the source stays in effect
+ * unless the auto-conf override sets it again.
+ */
+static char *
+new_node_setting(PGconn *conn, SubscriberCreateContext *ctx, const char *name)
+{
+	PQExpBuffer query = createPQExpBuffer();
+	PGresult   *res;
+	char	   *val = NULL;
+	char	   *source_val;
+	bool		from_auto;
+
+	printfPQExpBuffer(query,
+					  "SELECT setting, coalesce(sourcefile, '')"
+					  " FROM pg_settings WHERE name = '%s'", name);
+	res = debug_exec(conn, query->data);
+	if (PQresultStatus(res) != PGRES_TUPLES_OK || PQntuples(res) != 1)
+		die(_("could not read the setting \"%s\" from the source: %s"),
+			name, PQerrorMessage(conn));
+	source_val = pg_strdup(PQgetvalue(res, 0, 0));
+	{
+		const char *file = PQgetvalue(res, 0, 1);
+		size_t		len = strlen(file);
+		const char *auto_name = "postgresql.auto.conf";
+
+		from_auto = len >= strlen(auto_name) &&
+			strcmp(file + len - strlen(auto_name), auto_name) == 0;
+	}
+	PQclear(res);
+	destroyPQExpBuffer(query);
+
+	if (ctx->postgresql_auto_conf)
+		val = conf_file_last_value(ctx->postgresql_auto_conf, name);
+	if (val == NULL && !from_auto && ctx->postgresql_conf)
+		val = conf_file_last_value(ctx->postgresql_conf, name);
+	if (val == NULL)
+		return source_val;
+	pg_free(source_val);
+	return val;
+}
+
+/*
+ * The new node starts from the source's configuration, so what it will be
+ * allowed to do is known before it exists.  After the join it has one
+ * logical slot and one WAL sender for each of the source and every peer (their
+ * reverse subscriptions), and it must listen where --subscriber-dsn says.
+ * Neither can be fixed once the backup is promoted without starting over.
+ */
+static void
+check_new_node_config(PGconn *source_conn, SubscriberCreateContext *ctx)
+{
+	int			needed = ctx->bidir.num_peers + 1;
+	char	   *val;
+	int			port;
+	char	   *sub_dsn;
+	PQconninfoOption *opts;
+	char	   *errmsg = NULL;
+	const char *dsn_port = DEF_PGPORT_STR;
+	PQconninfoOption *o;
+
+	val = new_node_setting(source_conn, ctx, "max_replication_slots");
+	if (atoi(val) < needed)
+		die(_("the new node would get max_replication_slots = %s but needs "
+			  "%d (one per existing node); raise it on the source or set it "
+			  "with --postgresql-conf/--postgresql-auto-conf"), val, needed);
+	pg_free(val);
+
+	val = new_node_setting(source_conn, ctx, "max_wal_senders");
+	if (atoi(val) < needed)
+		die(_("the new node would get max_wal_senders = %s but needs %d "
+			  "(one per existing node); raise it on the source or set it "
+			  "with --postgresql-conf/--postgresql-auto-conf"), val, needed);
+	pg_free(val);
+
+	val = new_node_setting(source_conn, ctx, "port");
+	port = atoi(val);
+	pg_free(val);
+
+	sub_dsn = get_connstr(ctx->base_sub_connstr, ctx->database_list[0]);
+	opts = PQconninfoParse(sub_dsn, &errmsg);
+	if (opts == NULL)
+		die(_("--subscriber-dsn (\"%s\") is not a usable connection string: %s\n"),
+			redacted_connstr(sub_dsn), errmsg ? errmsg : "out of memory");
+	for (o = opts; o->keyword; o++)
+		if (strcmp(o->keyword, "port") == 0 && o->val != NULL && o->val[0])
+			dsn_port = o->val;
+	if (atoi(dsn_port) != port)
+		die(_("--subscriber-dsn uses port %s but the new node would listen "
+			  "on port %d, inherited from the source; set port with "
+			  "--postgresql-auto-conf"), dsn_port, port);
+	PQconninfoFree(opts);
+	pg_free(sub_dsn);
+}
+
+/*
+ * The name of the slot the join creates on the source, as spock names it.
+ */
+static char *
+source_slot_name_for(PGconn *conn, const char *dbname, const char *provider_node,
+					 const char *subscription_name)
+{
+	PQExpBuffer query = createPQExpBuffer();
+	PGresult   *res;
+	char	   *name;
+	char	   *l1 = PQescapeLiteral(conn, dbname, strlen(dbname));
+	char	   *l2 = PQescapeLiteral(conn, provider_node, strlen(provider_node));
+	char	   *l3 = PQescapeLiteral(conn, subscription_name, strlen(subscription_name));
+
+	if (l1 == NULL || l2 == NULL || l3 == NULL)
+		die(_("out of memory"));
+	printfPQExpBuffer(query, "SELECT spock.spock_gen_slot_name(%s, %s, %s)",
+					  l1, l2, l3);
+	PQfreemem(l1);
+	PQfreemem(l2);
+	PQfreemem(l3);
+	res = debug_exec(conn, query->data);
+	if (PQresultStatus(res) != PGRES_TUPLES_OK || PQntuples(res) != 1)
+		die(_("could not generate the source slot name: %s"),
+			PQerrorMessage(conn));
+	name = pg_strdup(PQgetvalue(res, 0, 0));
+	PQclear(res);
+	destroyPQExpBuffer(query);
+	return name;
 }
 
 /*
@@ -1445,7 +1722,8 @@ check_subscriber_dsn_unused(const char *sub_connstr)
 static void
 check_preconditions(PGconn *source_conn, const char *source_node_name,
 					const char *subscriber_name,
-					PeerNodeInfo *peers, int num_peers)
+					PeerNodeInfo *peers, int num_peers,
+					int source_slots_needed, const char *source_slot_name)
 {
 	PGresult   *res;
 	int			i;
@@ -1466,15 +1744,16 @@ check_preconditions(PGconn *source_conn, const char *source_node_name,
 				subscriber_name);
 
 	/*
-	 * Source: the base backup holds two WAL senders (-X s).  No free slot is
-	 * required here: the source slot is created before the backup, where a
-	 * failure costs nothing, and with --drop-slot-if-exists it replaces a
-	 * stale slot of the same name, which a full slot table must not block.
+	 * Source: the base backup holds two WAL senders (-X s) and, unless the
+	 * caller turned it off, a temporary physical slot; the logical source slot
+	 * needs one more unless it replaces a stale one (source_slots_needed is
+	 * worked out by the caller).
 	 */
 	{
 		char	   *rev = sub_name_for(source_node_name, subscriber_name);
 
-		check_node_ready_for_join(source_conn, "source", 0, 2, rev, NULL);
+		check_node_ready_for_join(source_conn, "source", source_slots_needed,
+								  2, subscriber_name, rev, NULL);
 		pg_free(rev);
 	}
 
@@ -1495,7 +1774,7 @@ check_preconditions(PGconn *source_conn, const char *source_node_name,
 	 * monotonically non-decreasing and is never zero on any node that has
 	 * replicated so much as a single DDL statement.
 	 */
-	wait_for_outbound_drain(source_conn);
+	wait_for_outbound_drain(source_conn, source_slot_name);
 
 	/* Full-mesh directed-graph check, from the source's own perspective. */
 	check_mesh_edges(source_conn, source_node_name, all_names, total_nodes);
@@ -1525,7 +1804,7 @@ check_preconditions(PGconn *source_conn, const char *source_node_name,
 			char	   *rev = sub_name_for(peers[i].node_name, subscriber_name);
 
 			check_node_ready_for_join(peer_conn, peers[i].node_name, 1, 1,
-									  rev, peers[i].slot_name);
+									  subscriber_name, rev, peers[i].slot_name);
 			pg_free(rev);
 		}
 
@@ -3222,8 +3501,8 @@ check_sidecar_dir_writable(const char *sidecar_path)
  * ctx->replication_sets, ctx->bidir.peers and ctx->use_existing_data_dir set
  * for the phases that follow.
  *
- * What cannot be checked here -- n3's reachability of its peers, and the
- * limits in n3's own configuration -- needs n3 to exist.
+ * What cannot be checked here is whether the existing nodes can connect back
+ * to the new node: that needs the new node to exist.
  */
 static void
 bidir_preflight(SubscriberCreateContext *ctx)
@@ -3264,9 +3543,69 @@ bidir_preflight(SubscriberCreateContext *ctx)
 					  redacted_connstr(ctx->bidir.peers[pi].dsn),
 					  ctx->bidir.peers[pi].slot_name);
 	}
-	check_preconditions(provider_conn, ctx->remote_info->node_name,
-						ctx->subscriber_name,
-						ctx->bidir.peers, ctx->bidir.num_peers);
+	/*
+	 * A subscriber name taken by a node of the mesh also generates the name of
+	 * a slot that mesh already uses, so report the collision itself before
+	 * anything about slots.  check_preconditions() repeats the test.
+	 */
+	{
+		int			ni;
+
+		if (strcmp(ctx->remote_info->node_name, ctx->subscriber_name) == 0)
+			ni = -1;
+		else
+			for (ni = 0; ni < ctx->bidir.num_peers; ni++)
+				if (strcmp(ctx->bidir.peers[ni].node_name,
+						   ctx->subscriber_name) == 0)
+					break;
+		if (ni < ctx->bidir.num_peers)
+			die(_("the subscriber name \"%s\" is already used by a node of the "
+				  "cluster being joined; choose another --subscriber-name"),
+				ctx->subscriber_name);
+	}
+	{
+		char	   *sub = sub_name_for(ctx->subscriber_name,
+									   ctx->remote_info->node_name);
+		char	   *slot = source_slot_name_for(provider_conn, ctx->remote_info->dbname,
+												ctx->remote_info->node_name, sub);
+		bool		stale = replication_slot_exists(provider_conn, slot);
+		int			slots_needed = 0;
+		const char *xargs = ctx->extra_basebackup_args;
+
+		if (stale && !ctx->drop_slot_if_exists)
+			die(_("replication slot \"%s\" already exists on the source; "
+				  "drop it or use --drop-slot-if-exists to drop it "
+				  "automatically"), slot);
+
+		/*
+		 * The logical source slot (unless it replaces a stale one) and the
+		 * temporary physical slot pg_basebackup -X s creates (unless
+		 * --extra-basebackup-args turns it off or names its own).
+		 */
+		if (!stale)
+			slots_needed++;
+		if (xargs == NULL ||
+			(strstr(xargs, "--no-slot") == NULL &&
+			 strstr(xargs, "--slot") == NULL &&
+			 strstr(xargs, "-S") == NULL))
+			slots_needed++;
+
+		check_preconditions(provider_conn, ctx->remote_info->node_name,
+							ctx->subscriber_name,
+							ctx->bidir.peers, ctx->bidir.num_peers,
+							slots_needed, slot);
+		pg_free(sub);
+		pg_free(slot);
+	}
+
+	/*
+	 * The programs used after the backup (the catalog strip runs
+	 * pg_resetwal on the promoted copy) must exist and match this version.
+	 */
+	pg_free(find_other_exec_or_die(argv0, "pg_basebackup"));
+	pg_free(find_other_exec_or_die(argv0, "pg_ctl"));
+	pg_free(find_other_exec_or_die(argv0, "postgres"));
+	pg_free(find_other_exec_or_die(argv0, "pg_resetwal"));
 	check_single_spock_database(provider_conn, ctx->base_prov_connstr, db);
 	check_no_native_subscriptions(provider_conn);
 
@@ -3290,6 +3629,7 @@ bidir_preflight(SubscriberCreateContext *ctx)
 	}
 
 	check_sidecar_dir_writable(ctx->bidir_pending_path);
+	check_new_node_config(provider_conn, ctx);
 
 	PQfinish(provider_conn);
 	provider_conn = NULL;

@@ -53,14 +53,17 @@ With `--bidirectional`, the utility joins the new node to an existing multi-mast
 | `--max-wait=SECS` | A hard ceiling, in seconds, on the catchup wait after the connection is made (default: unbounded). It does not bound PostgreSQL's own startup.
 | `--cleanup` | Remove the partial state of an interrupted join and exit. Stops PostgreSQL if it is running in `--pgdata`.
 | `--force` | With `--cleanup`, also remove the data directory. Required when the manifest records a completed join.
-| `--skip-disk-space-check` | Before the base backup, the utility compares the free space in the `--pgdata` filesystem with the size of the source's `pg_default` and `pg_global` tablespaces, and stops if it is too small. That figure assumes an uncompressed copy; use this option when the backup or the filesystem compresses it.
+| `--skip-disk-space-check` | Before the base backup, the utility compares the free space in the `--pgdata` filesystem with an estimate of the copy: the total size of the source's databases plus 10% for the WAL streamed during the copy. This is an early warning, not an exact figure: it assumes an uncompressed copy that lands entirely on the `--pgdata` filesystem. If the check fails, free up space or choose another `--pgdata`; when the backup or the filesystem compresses it, or tablespaces are copied to other filesystems, check the space yourself and use this option to proceed. If the check cannot be made, the utility says so and goes on. |
 
 `--subscriber-dsn` must be an address the existing nodes can use to connect back to the new node. The join requires:
 
 - Spock 6.0.0 or later on every node.
 - `track_commit_timestamp = on` on the source and on every peer.
 - Every node in the cluster subscribed to every other node, with all those subscriptions replicating.
-- Every change committed on the source when the check starts has reached its existing peers. The utility waits for them to catch up, and stops if no outbound slot makes progress for 30 seconds.
+- Every change committed on the source when the check starts has been confirmed by each of the source's existing outbound Spock slots. The utility waits for them to catch up, and stops if no outbound slot makes progress for 30 seconds.
+- Room for the join on the existing nodes: on the source, a free replication slot for the logical slot and one for the base backup (none for the backup with `--no-slot` in `--extra-basebackup-args`) and two free WAL senders; on each peer, one free slot and one free WAL sender. `wal_level = logical` on all of them.
+- A new-node configuration that fits: the new node gets one replication slot and one WAL sender for the source and each peer, so `max_replication_slots` and `max_wal_senders` must be at least the number of existing nodes. The utility reads both from the source and from `--postgresql-conf` and `--postgresql-auto-conf`. The port of `--subscriber-dsn` must be the port the new node will listen on, which is the source's unless an override file sets `port`.
+- No server listening at `--subscriber-dsn`, no slot of the join's name on the source (unless `--drop-slot-if-exists`), and no leftover subscription, slot or node entry of the new node's name from an earlier attempt on the source or a peer.
 - Exactly one Spock database on the source, and no enabled native logical subscriptions.
 - The same replication sets, with the same tables, row filters and table schemas, on the source and on each peer.
 

@@ -951,19 +951,19 @@ wait_for_n1_drained();
 # skipped loudly rather than passing with fewer tests.
 note("Scenario 17: free disk space for the base backup");
 SKIP: {
-    skip "needs a small RAM disk, built with hdiutil on macOS only", 7
+    skip "needs a small RAM disk, built with hdiutil on macOS only", 13
         unless $^O eq 'darwin' && -x '/usr/bin/hdiutil';
 
     my $ramdev = `hdiutil attach -nomount ram://65536 2>/dev/null`;
     $ramdev =~ s/\s+//g;
-    skip "could not create a RAM disk", 7 unless $ramdev =~ m{^/dev/disk\d+$};
+    skip "could not create a RAM disk", 13 unless $ramdev =~ m{^/dev/disk\d+$};
     my $mnt = '/tmp/spock_pn_tiny_mnt';
     mkdir $mnt unless -d $mnt;
     if (system("newfs_hfs -v spocktiny $ramdev >/dev/null 2>&1") != 0
         || system("diskutil mount -mountPoint $mnt $ramdev >/dev/null 2>&1") != 0)
     {
         system("hdiutil detach $ramdev >/dev/null 2>&1");
-        skip "could not format and mount the RAM disk", 7;
+        skip "could not format and mount the RAM disk", 13;
     }
 
     my $dir17 = "$mnt/n3";
@@ -979,6 +979,27 @@ SKIP: {
     ok(log_tail_has(qr/not enough free disk space for the base backup.*--skip-disk-space-check/s, $before),
        'rejection reports the shortfall and names --skip-disk-space-check');
     assert_no_side_effects($dir17, $slots17, 'too little disk space');
+
+    # A relative --pgdata that does not exist yet used to skip the check
+    # silently (no directory part to walk up to).
+    {
+        use Cwd qw(getcwd);
+        my $cwd = getcwd();
+        chdir($mnt) or BAIL_OUT("cannot chdir to $mnt");
+        $before = log_size();
+        my $slots17r = slot_count();
+        ok(!system_maybe($SCS_BIN,
+              '--bidirectional',
+              '--pgdata',            'n3rel',
+              '--subscriber-name',   'n3',
+              '--provider-dsn',      $n1_dsn,
+              '--subscriber-dsn',    "host=$host port=" . ($node_ports->[1] + 167) . " dbname=$dbname"),
+           'a relative --pgdata on a too-small filesystem is rejected');
+        ok(log_tail_has(qr/not enough free disk space for the base backup/, $before),
+           'the relative path was measured, not skipped');
+        assert_no_side_effects("$mnt/n3rel", $slots17r, 'relative --pgdata, too little disk space');
+        chdir($cwd);
+    }
 
     # With the check off the join gets as far as the copy and then runs out of
     # space; what matters is that the estimate no longer stops it first.
@@ -1000,6 +1021,227 @@ SKIP: {
     );
     system("diskutil unmount force $mnt >/dev/null 2>&1; hdiutil detach $ramdev >/dev/null 2>&1");
 }
+
+# Scenario 18: the source needs a free slot for the base backup's temporary
+# physical slot as well as for the logical source slot.  With exactly one free
+# the join must be rejected up front; --extra-basebackup-args '--no-slot' removes
+# the need for the second one.
+note("Scenario 18: source slot for the base backup");
+my $n1_slots = psql_capture('-p', $node_ports->[0], '-d', $dbname, '-t', '-A', '-c',
+                            "SELECT count(*) FROM pg_replication_slots");
+system_or_bail "$pg_bin/psql", '-q', '-p', $node_ports->[0], '-d', $dbname, '-c',
+    "ALTER SYSTEM SET max_replication_slots = " . ($n1_slots + 1);
+system_or_bail "$pg_bin/pg_ctl", 'restart', '-w', '-D', $n1_datadir, '-m', 'fast',
+    '-l', "$config->{log_dir}/n1_scenario18_restart.log";
+ok(wait_for_pg_ready($host, $node_ports->[0], $pg_bin, 30), 'n1 restarted with one free slot')
+    or BAIL_OUT('cannot continue without n1 back up');
+ok(wait_for_sub_status(1, 'sub_n1_n2', 'replicating', 60)
+   && wait_for_sub_status(2, 'sub_n2_n1', 'replicating', 60),
+   'the n1 <-> n2 subscriptions are replicating again')
+    or BAIL_OUT('mesh did not recover after the n1 restart');
+wait_for_n1_drained();
+
+my $dir18 = fresh_datadir();
+$before = log_size();
+my $slots18 = slot_count();
+ok(!system_maybe($SCS_BIN,
+      '--bidirectional',
+      '--pgdata',            $dir18,
+      '--subscriber-name',   'n3',
+      '--provider-dsn',      $n1_dsn,
+      '--subscriber-dsn',    "host=$host port=" . ($node_ports->[1] + 168) . " dbname=$dbname"),
+   '--bidirectional rejects a source that cannot also hold the backup slot');
+ok(log_tail_has(qr/"source" has 1 free replication slot\(s\) but the join needs 2/, $before),
+   'rejection names the source and the two slots needed');
+assert_no_side_effects($dir18, $slots18, 'source without a backup slot');
+
+$before = log_size();
+ok(!system_maybe($SCS_BIN,
+      '--bidirectional',
+      '--extra-basebackup-args', '--no-slot',
+      '--pgdata',            $dir18,
+      '--subscriber-name',   'n3',
+      '--provider-dsn',      $n1_dsn,
+      '--subscriber-dsn',    "host=$host port=" . ($node_ports->[1] + 168) . " dbname=$dbname"),
+   'with --no-slot the slot check passes and a later check rejects the join');
+ok(!log_tail_has(qr/free replication slot\(s\)/, $before),
+   'one free slot is enough once the backup uses no slot of its own');
+assert_no_side_effects($dir18, $slots18, 'source with --no-slot');
+remove_tree($dir18) if -d $dir18;
+
+system_or_bail "$pg_bin/psql", '-q', '-p', $node_ports->[0], '-d', $dbname, '-c',
+    "ALTER SYSTEM RESET max_replication_slots";
+system_or_bail "$pg_bin/pg_ctl", 'restart', '-w', '-D', $n1_datadir, '-m', 'fast',
+    '-l', "$config->{log_dir}/n1_scenario18_restore.log";
+ok(wait_for_pg_ready($host, $node_ports->[0], $pg_bin, 30), 'n1 restarted with its normal slot limit')
+    or BAIL_OUT('cannot continue without n1 back up');
+ok(wait_for_sub_status(1, 'sub_n1_n2', 'replicating', 60)
+   && wait_for_sub_status(2, 'sub_n2_n1', 'replicating', 60),
+   'the n1 <-> n2 subscriptions are replicating again')
+    or BAIL_OUT('mesh did not recover after the n1 restart');
+wait_for_n1_drained();
+
+# Scenario 19: a slot left on the source by an earlier attempt.  Without
+# --drop-slot-if-exists the join is rejected up front.  With it, the stale
+# slot (inactive, never advancing) must not be mistaken for unreplicated work
+# by the drain wait: the run gets past it, and is stopped later by the port
+# check because no port override is given.
+note("Scenario 19: stale source slot and --drop-slot-if-exists");
+my $stale = psql_capture('-p', $node_ports->[0], '-d', $dbname, '-t', '-A', '-c',
+                         "SELECT spock.spock_gen_slot_name('$dbname', 'n1', 'sub_n3_n1')");
+system_or_bail "$pg_bin/psql", '-q', '-p', $node_ports->[0], '-d', $dbname, '-c',
+    "SELECT pg_create_logical_replication_slot('$stale', 'spock_output')";
+my $dir19 = fresh_datadir();
+$before = log_size();
+my $slots19 = slot_count();
+ok(!system_maybe($SCS_BIN,
+      '--bidirectional',
+      '--pgdata',            $dir19,
+      '--subscriber-name',   'n3',
+      '--provider-dsn',      $n1_dsn,
+      '--subscriber-dsn',    "host=$host port=" . ($node_ports->[1] + 169) . " dbname=$dbname"),
+   '--bidirectional rejects a stale source slot');
+ok(log_tail_has(qr/replication slot "\Q$stale\E" already exists on the source.*--drop-slot-if-exists/s, $before),
+   'rejection names the slot and --drop-slot-if-exists');
+assert_no_side_effects($dir19, $slots19, 'stale source slot');
+
+$before = log_size();
+ok(!system_maybe($SCS_BIN,
+      '--bidirectional',
+      '--drop-slot-if-exists',
+      '--pgdata',            $dir19,
+      '--subscriber-name',   'n3',
+      '--provider-dsn',      $n1_dsn,
+      '--subscriber-dsn',    "host=$host port=" . ($node_ports->[1] + 169) . " dbname=$dbname"),
+   'with --drop-slot-if-exists the join is stopped by a later check');
+ok(!log_tail_has(qr/unreplicated changes pending/, $before),
+   'the stale slot was not counted as unreplicated work');
+ok(log_tail_has(qr/--subscriber-dsn uses port \d+ but the new node would listen/, $before),
+   'the run got past the drain wait to the new-node port check');
+assert_no_side_effects($dir19, $slots19, 'stale source slot with --drop-slot-if-exists');
+remove_tree($dir19) if -d $dir19;
+system_or_bail "$pg_bin/psql", '-q', '-p', $node_ports->[0], '-d', $dbname, '-c',
+    "SELECT pg_drop_replication_slot('$stale')";
+
+# Scenario 20: what the new node will be allowed to do.  It starts from a copy
+# of the source's configuration (plus the override files), and needs a slot
+# and a WAL sender for each existing node, and must listen on the port of
+# --subscriber-dsn.  These only fail after promotion if not checked now.
+note("Scenario 20: the new node's own configuration");
+my $dsn_port20 = $node_ports->[1] + 170;
+my @checks20 = (
+    [ 'max_replication_slots = 1',
+      qr/would get max_replication_slots = 1 but needs 2/ ],
+    [ 'max_wal_senders = 1',
+      qr/would get max_wal_senders = 1 but needs 2/ ],
+    [ 'port = ' . ($dsn_port20 + 1),
+      qr/--subscriber-dsn uses port $dsn_port20 but the new node would listen on port ${\($dsn_port20 + 1)}/ ],
+);
+my $c20 = 0;
+for my $chk (@checks20) {
+    $c20++;
+    my ($line, $re) = @$chk;
+    my $conf = "/tmp/tmp_spock_pn_conf_$c20.conf";
+    open(my $cf, '>', $conf) or BAIL_OUT("cannot write $conf");
+    print $cf "$line\n";
+    close $cf;
+
+    my $dir20 = fresh_datadir();
+    $before = log_size();
+    my $slots20 = slot_count();
+    ok(!system_maybe($SCS_BIN,
+          '--bidirectional',
+          '--postgresql-auto-conf', $conf,
+          '--pgdata',            $dir20,
+          '--subscriber-name',   'n3',
+          '--provider-dsn',      $n1_dsn,
+          '--subscriber-dsn',    "host=$host port=$dsn_port20 dbname=$dbname"),
+       "--bidirectional rejects a new-node configuration with \"$line\"");
+    ok(log_tail_has($re, $before), "rejection explains \"$line\"");
+    assert_no_side_effects($dir20, $slots20, "new-node config \"$line\"");
+    remove_tree($dir20) if -d $dir20;
+    unlink $conf;
+}
+
+sub log_tail_capture {
+    my ($pattern, $since_bytes) = @_;
+    open(my $fh, '<', $log_file) or return;
+    seek($fh, $since_bytes, 0);
+    local $/;
+    my $tail = <$fh> // '';
+    close $fh;
+    return $tail =~ $pattern ? ($1, $2) : ();
+}
+
+# Scenario 21: the free-space check on any platform.  The environment variable
+# replaces the measured free space (a test hook, inert unless set), so the
+# estimate itself is exercised: it must cover at least the source's database,
+# and a filesystem with plenty of room must pass it.
+note("Scenario 21: free-space estimate");
+my $db_mb = int(psql_capture('-p', $node_ports->[0], '-d', $dbname, '-t', '-A', '-c',
+                             "SELECT pg_database_size('$dbname')") / (1024 * 1024));
+my $dir21 = fresh_datadir();
+$before = log_size();
+my $slots21 = slot_count();
+{
+    local $ENV{SPOCK_CREATE_SUBSCRIBER_TEST_FREE_BYTES} = 1048576;
+    ok(!system_maybe($SCS_BIN,
+          '--bidirectional',
+          '--pgdata',            $dir21,
+          '--subscriber-name',   'n3',
+          '--provider-dsn',      $n1_dsn,
+          '--subscriber-dsn',    "host=$host port=" . ($node_ports->[1] + 171) . " dbname=$dbname"),
+       '--bidirectional rejects a filesystem with 1 MB free');
+}
+my ($avail21, $need21) = log_tail_capture(
+    qr/not enough free disk space for the base backup in "[^"]+": (\d+) MB available, about (\d+) MB needed/,
+    $before);
+is($avail21, 1, 'the shortfall report shows the free space');
+ok(defined $need21 && $need21 >= $db_mb,
+   "the estimate (" . ($need21 // 'none') . " MB) covers the database ($db_mb MB)");
+ok(log_tail_has(qr/--skip-disk-space-check to proceed/, $before),
+   'the shortfall report names the way past it');
+assert_no_side_effects($dir21, $slots21, 'free-space estimate');
+
+$before = log_size();
+{
+    local $ENV{SPOCK_CREATE_SUBSCRIBER_TEST_FREE_BYTES} = 1099511627776;
+    ok(!system_maybe($SCS_BIN,
+          '--bidirectional',
+          '--pgdata',            $dir21,
+          '--subscriber-name',   'n3',
+          '--provider-dsn',      $n1_dsn,
+          '--subscriber-dsn',    "host=$host port=" . ($node_ports->[1] + 171) . " dbname=$dbname"),
+       'with plenty of free space a later check rejects the join');
+}
+ok(!log_tail_has(qr/not enough free disk space/, $before),
+   'a filesystem with room passes the estimate');
+ok(log_tail_has(qr/--subscriber-dsn uses port/, $before),
+   'the run got past the free-space check');
+remove_tree($dir21) if -d $dir21;
+
+# Scenario 22: a spock node row for the new node's name on a peer.  Creating
+# the reverse subscription there would fail after promotion if its address
+# differs from the new node's, so it must be rejected before the backup.
+note("Scenario 22: leftover node row on a peer");
+system_or_bail "$pg_bin/psql", '-q', '-p', $node_ports->[1], '-d', $dbname, '-c',
+    "INSERT INTO spock.node (node_id, node_name) VALUES (424242, 'n3')";
+my $dir22 = fresh_datadir();
+$before = log_size();
+my $slots22 = slot_count();
+ok(!system_maybe($SCS_BIN,
+      '--bidirectional',
+      '--pgdata',            $dir22,
+      '--subscriber-name',   'n3',
+      '--provider-dsn',      $n1_dsn,
+      '--subscriber-dsn',    "host=$host port=" . ($node_ports->[1] + 172) . " dbname=$dbname"),
+   '--bidirectional rejects a leftover node row on a peer');
+ok(log_tail_has(qr/a spock node named "n3" is already known on "n2"/, $before),
+   'rejection names the node and the peer');
+assert_no_side_effects($dir22, $slots22, 'leftover node row');
+remove_tree($dir22) if -d $dir22;
+system_or_bail "$pg_bin/psql", '-q', '-p', $node_ports->[1], '-d', $dbname, '-c',
+    "DELETE FROM spock.node WHERE node_id = 424242";
 
 # =============================================================================
 # CLEANUP

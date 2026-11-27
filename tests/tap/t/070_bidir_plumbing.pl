@@ -749,6 +749,7 @@ ok(!system_maybe($SCS_BIN,
       '--subscriber-name',   'n3',
       '--provider-dsn',      $n1_dsn,
       '--subscriber-dsn',    $n3_dsn,
+      '--postgresql-conf',   $n3_conf,
       '--extra-basebackup-args', '--waldir=/nonexistent_pr3_test_waldir_xyz'),
    'a broken --extra-basebackup-args makes the base backup fail');
 
@@ -805,6 +806,7 @@ ok(!system_maybe($SCS_BIN,
       '--subscriber-name',   'n3',
       '--provider-dsn',      $n1_dsn,
       '--subscriber-dsn',    $n3_dsn,
+      '--postgresql-conf',   $n3_conf,
       '--extra-basebackup-args', '--waldir=/nonexistent_pr3_test_waldir_retry'),
    'a broken backup orphans a slot for the retry-cleanup test');
 ok(-f $retry_sidecar, 'pending sidecar written for the retry-cleanup test');
